@@ -1,0 +1,24 @@
+{
+  "name": "dental-clinic-system",
+  "version": "1.0.0",
+  "description": "Dental Clinic Management System",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tamafred-2/dental-clinic-system.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tamafred-2/dental-clinic-system/issues"
+  },
+  "homepage": "https://github.com/tamafred-2/dental-clinic-system#readme"
+}
