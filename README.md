@@ -1,5 +1,5 @@
 # Dental Clinic Website + AI Automation System
-![Next.js](https://img.shields.io/badge/Next.js-15.x-000000?logo=next.js&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16.x-000000?logo=next.js&logoColor=white)
 ![React](https://img.shields.io/badge/React-19.x-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![NestJS](https://img.shields.io/badge/NestJS-11.x-E0234E?logo=nestjs&logoColor=white)
