@@ -8,6 +8,9 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -20,5 +23,9 @@
   "bugs": {
     "url": "https://github.com/tamafred-2/dental-clinic-system/issues"
   },
-  "homepage": "https://github.com/tamafred-2/dental-clinic-system#readme"
+  "homepage": "https://github.com/tamafred-2/dental-clinic-system#readme",
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.0"
+  }
 }
