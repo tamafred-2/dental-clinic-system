@@ -1,10 +1,20 @@
 # Dental Clinic Website + AI Automation System
+![Next.js](https://img.shields.io/badge/Next.js-15.x-000000?logo=next.js&logoColor=white)
+![React](https://img.shields.io/badge/React-19.x-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11.x-E0234E?logo=nestjs&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.x-4169E1?logo=postgresql&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma&logoColor=white)
+![n8n](https://img.shields.io/badge/n8n-Automation-EA4B71?logo=n8n&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker&logoColor=white)
 
-A full-stack dental clinic website and automation platform combining appointment management, AI administrative assistance, Facebook Messenger, Gmail notifications, and a staff dashboard.
+A full-stack dental clinic website and automation platform combining
+appointment management, AI administrative assistance, Facebook Messenger,
+Gmail notifications, and a staff dashboard.
 
-> **Project status:** In Development
-> **Architecture:** Modular Monolith + Headless API + Automation Layer
-> **Primary goal:** Build a professional, responsive, secure dental clinic system suitable for learning, portfolio demonstration, and future production development.
+> **Architecture:** Modular Monolith + Headless API + Automation Layer  
+
+
 
 ---
 
