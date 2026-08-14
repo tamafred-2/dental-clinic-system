@@ -158,6 +158,8 @@ async function main() {
   await prisma.conversation.deleteMany();
   await prisma.appointment.deleteMany();
   await prisma.schedule.deleteMany();
+  await prisma.blockedDate.deleteMany();
+  await prisma.clinicHour.deleteMany();
   await prisma.dentist.deleteMany();
   await prisma.service.deleteMany();
   await prisma.faq.deleteMany();
@@ -166,19 +168,29 @@ async function main() {
   await prisma.user.deleteMany();
   await prisma.clinic.deleteMany();
 
-  await prisma.clinic.create({
+  const clinic = await prisma.clinic.create({
     data: {
-      slug: "dental-clinic",
-      name: "Bright Smile Dental Clinic",
-      address: "123 Orchard Road, Singapore 238888",
-      phone: "+65 6123 4567",
-      email: "hello@brightsmile.test",
+      slug: "dental-clinic-website",
+      name: "Dental Clinic Website",
+      address: "Calasiao, Pangasinan, Philippines",
+      phone: "+63 75 555 0142",
+      email: "hello@dentalclinic.test",
+      timeZone: "Asia/Manila",
       openingHours: "Monday–Friday, 09:00–18:00",
       appointmentPolicy:
         "Please arrive 10 minutes before your appointment and bring a valid photo ID. Appointment requests are confirmed by the clinic.",
       cancellationPolicy:
         "Please contact the clinic at least 24 hours before your appointment if you need to cancel or reschedule. Repeated late cancellations or no-shows may require a deposit for future bookings.",
     },
+  });
+
+  await prisma.clinicHour.createMany({
+    data: weekdays.map((day) => ({
+      clinicId: clinic.id,
+      day,
+      startTime: "09:00",
+      endTime: "18:00",
+    })),
   });
 
   const passwordHash = await argon2.hash("DevelopmentOnlyPassword!2026", {
@@ -237,7 +249,7 @@ async function main() {
         firstName,
         lastName,
         email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${sequence}@example.test`,
-        phone: `+65 8${String(1000000 + index).slice(-7)}`,
+        phone: `+63 917 000 ${String(index + 1).padStart(4, "0")}`,
       };
     }),
   });

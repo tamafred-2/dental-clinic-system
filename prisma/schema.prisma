@@ -51,17 +51,43 @@ enum MessageSenderType {
 }
 
 model Clinic {
-  id                 String   @id @default(cuid())
-  slug               String   @unique
+  id                 String        @id @default(cuid())
+  slug               String        @unique
   name               String
   address            String
   phone              String
   email              String
+  timeZone           String        @default("Asia/Manila")
   openingHours       String
-  appointmentPolicy  String   @default("")
-  cancellationPolicy String   @default("")
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  appointmentPolicy  String        @default("")
+  cancellationPolicy String        @default("")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  hours              ClinicHour[]
+  blockedDates       BlockedDate[]
+}
+
+model ClinicHour {
+  id        String    @id @default(cuid())
+  clinicId  String
+  day       DayOfWeek
+  startTime String
+  endTime   String
+  clinic    Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, day])
+}
+
+model BlockedDate {
+  id        String   @id @default(cuid())
+  clinicId  String
+  date      String
+  reason    String?
+  createdAt DateTime @default(now())
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, date])
+  @@index([date])
 }
 
 model User {
