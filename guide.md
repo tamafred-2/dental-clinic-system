@@ -899,6 +899,21 @@ Possible authentication approaches include:
 
 For a clinic staff dashboard, secure HTTP-only cookies are a strong option when using a browser-based application.
 
+### Chosen implementation
+
+This project uses server-side, opaque cookie sessions:
+
+- `POST /api/auth/login` verifies the email and password, then creates a session record in PostgreSQL.
+- The browser receives a random session token only in the `dental_session` HTTP-only cookie. The database stores only its SHA-256 hash, so a database leak does not reveal usable session cookies.
+- `GET /api/auth/me` restores the signed-in user from a valid, unexpired, non-revoked session.
+- `POST /api/auth/logout` revokes the server-side session and clears the cookie.
+- Cookies use `HttpOnly`, `SameSite=Strict`, the `/api` path, and `Secure` automatically in production.
+- The API uses Helmet to return standard defensive HTTP response headers and rate-limits requests globally; login has a tighter limit of five attempts per minute.
+
+Use `WEB_ORIGIN` to allow only the frontend origin through CORS, and set `SESSION_TTL_DAYS` to an integer between 1 and 30. The development default is 7 days.
+
+Do not put authentication tokens in `localStorage` or `sessionStorage`.
+
 ---
 
 ## Password Storage
@@ -915,6 +930,8 @@ Argon2
 ```
 
 or an appropriately configured bcrypt implementation.
+
+This project uses Argon2id with OWASP's minimum recommended memory and work settings. Seeded development users receive a development-only password hash; replace it with a real, unique password before any non-development deployment.
 
 ---
 
@@ -981,6 +998,45 @@ Cancellation policy
 The frontend can retrieve this information through the API.
 
 This also allows the AI knowledge base to use the same information.
+
+The MVP stores the appointment and cancellation policies as clinic-managed public text. Only an `ADMIN` can update them; later appointment workflows may enforce their rules separately.
+
+---
+
+## Clinic Location and Google Maps
+
+The public website should make it easy for patients to find the clinic without hard-coding location details in page components.
+
+When this feature is implemented, store structured location information with the clinic record:
+
+```
+addressLine1
+addressLine2
+city
+postalCode
+country
+googleMapsUrl
+latitude
+longitude
+placeId
+```
+
+The public clinic contact page can provide:
+
+```
+Formatted clinic address
+Open in Google Maps link
+Click-to-call phone link
+Public-transit or parking notes
+Accessible entrance information
+Opening-hours summary
+```
+
+Use `googleMapsUrl` for a simple, reliable external map link. Coordinates and a Google Place ID are optional and should only be stored when an embedded map, distance calculation, or location search needs them.
+
+Staff with clinic-management permission should be able to update the address and map link. Validate URLs, restrict this action to authorized staff, and preview the location before publishing it.
+
+Do not expose internal notes, staff-only directions, or patient location data on the public website.
 
 ---
 
@@ -2612,160 +2668,160 @@ The frontend should display a friendly message such as:
 
 ## Phase 1 — Planning
 
--  Define requirements
--  Define user roles
--  Define appointment workflow
--  Define AI boundaries
--  Create architecture diagram
--  Create ERD
--  Create wireframes
--  Define API structure
+- Define requirements
+- Define user roles
+- Define appointment workflow
+- Define AI boundaries
+- Create architecture diagram
+- Create ERD
+- Create wireframes
+- Define API structure
 
 ---
 
 ## Phase 2 — Foundation
 
--  Create monorepo
--  Configure TypeScript
--  Configure Next.js
--  Configure NestJS
--  Configure PostgreSQL
--  Configure Prisma
--  Configure Docker
--  Configure environment variables
--  Configure linting
--  Configure formatting
--  Configure testing
+- Create monorepo
+- Configure TypeScript
+- Configure Next.js
+- Configure NestJS
+- Configure PostgreSQL
+- Configure Prisma
+- Configure Docker
+- Configure environment variables
+- Configure linting
+- Configure formatting
+- Configure testing
 
 ---
 
 ## Phase 3 — Backend
 
--  Authentication
--  RBAC
--  Users
--  Patients
--  Dentists
--  Services
--  Clinic settings
--  Schedules
--  Appointments
--  Availability
--  Conversations
--  Messages
--  Notifications
--  Audit logs
+- Authentication
+- RBAC
+- Users
+- Patients
+- Dentists
+- Services
+- Clinic settings
+- Schedules
+- Appointments
+- Availability
+- Conversations
+- Messages
+- Notifications
+- Audit logs
 
 ---
 
 ## Phase 4 — Website
 
--  Homepage
--  Services
--  Dentists
--  Clinic information
--  FAQ
--  Contact
--  Appointment form
--  AI chat
--  Responsive mobile design
--  Accessibility
+- Homepage
+- Services
+- Dentists
+- Clinic information
+- FAQ
+- Contact
+- Appointment form
+- AI chat
+- Responsive mobile design
+- Accessibility
 
 ---
 
 ## Phase 5 — Admin Dashboard
 
--  Authentication
--  Dashboard
--  Appointment list
--  Appointment calendar
--  Patient management
--  Dentist management
--  Service management
--  Schedule management
--  Conversation management
--  AI handoff
--  Settings
--  Audit logs
+- Authentication
+- Dashboard
+- Appointment list
+- Appointment calendar
+- Patient management
+- Dentist management
+- Service management
+- Schedule management
+- Conversation management
+- AI handoff
+- Settings
+- Audit logs
 
 ---
 
 ## Phase 6 — Automation
 
--  Install n8n
--  Create webhook integration
--  Appointment confirmation
--  Staff notification
--  Appointment reminder
--  Cancellation notification
--  Rescheduling notification
--  Workflow error handling
--  Workflow logging
+- Install n8n
+- Create webhook integration
+- Appointment confirmation
+- Staff notification
+- Appointment reminder
+- Cancellation notification
+- Rescheduling notification
+- Workflow error handling
+- Workflow logging
 
 ---
 
 ## Phase 7 — AI
 
--  AI service
--  OpenAI integration
--  System prompt
--  Clinic knowledge base
--  RAG
--  Tool calling
--  Availability tool
--  Appointment tool
--  Human handoff
--  Safety guardrails
--  AI evaluation tests
+- AI service
+- OpenAI integration
+- System prompt
+- Clinic knowledge base
+- RAG
+- Tool calling
+- Availability tool
+- Appointment tool
+- Human handoff
+- Safety guardrails
+- AI evaluation tests
 
 ---
 
 ## Phase 8 — Facebook Messenger
 
--  Create Meta application
--  Configure Messenger
--  Configure webhook
--  Verify webhook
--  Receive messages
--  Store conversations
--  Send responses
--  Connect AI
--  Implement human handoff
--  Test webhook reliability
+- Create Meta application
+- Configure Messenger
+- Configure webhook
+- Verify webhook
+- Receive messages
+- Store conversations
+- Send responses
+- Connect AI
+- Implement human handoff
+- Test webhook reliability
 
 ---
 
 ## Phase 9 — Testing
 
--  Unit tests
--  Integration tests
--  API tests
--  Authentication tests
--  Authorization tests
--  Appointment tests
--  Availability tests
--  Webhook tests
--  AI safety tests
--  E2E tests
--  Load testing
--  Security testing
+- Unit tests
+- Integration tests
+- API tests
+- Authentication tests
+- Authorization tests
+- Appointment tests
+- Availability tests
+- Webhook tests
+- AI safety tests
+- E2E tests
+- Load testing
+- Security testing
 
 ---
 
 ## Phase 10 — Deployment
 
--  Production environment
--  Production database
--  Domain
--  HTTPS
--  Environment secrets
--  Backups
--  Monitoring
--  Logging
--  Error tracking
--  Security review
--  Privacy review
--  Disaster recovery plan
+- Production environment
+- Production database
+- Domain
+- HTTPS
+- Environment secrets
+- Backups
+- Monitoring
+- Logging
+- Error tracking
+- Security review
+- Privacy review
+- Disaster recovery plan
 
 ---
 
@@ -3170,6 +3226,16 @@ Internal Knowledge
 
 ---
 
+## 44.16 Staff Single Sign-On (OAuth)
+
+The MVP uses email/password authentication with secure, server-side cookie sessions. A future staff-only enhancement can offer OAuth sign-in through an approved identity provider, such as Google Workspace or Microsoft Entra ID.
+
+OAuth should be added only after defining who may sign in, verifying the provider's identity claims on the backend, mapping approved accounts to the existing `ADMIN`, `STAFF`, and `DENTIST` roles, and retaining the same server-side session controls after sign-in.
+
+Do not use OAuth as a way to grant access to every account from a provider domain automatically.
+
+---
+
 # 45. Features That Should Not Be Added to the MVP
 
 Some features add significant complexity and risk.
@@ -3272,109 +3338,109 @@ Before considering the MVP complete:
 
 ## Infrastructure
 
--  Docker works
--  PostgreSQL works
--  Prisma migrations work
--  Environment configuration works
--  Development startup is documented
+- Docker works
+- PostgreSQL works
+- Prisma migrations work
+- Environment configuration works
+- Development startup is documented
 
 ## Backend
 
--  NestJS API works
--  Authentication works
--  RBAC works
--  Patients work
--  Dentists work
--  Services work
--  Schedules work
--  Appointments work
--  Availability works
--  Conversations work
--  Notifications work
+- NestJS API works
+- Authentication works
+- RBAC works
+- Patients work
+- Dentists work
+- Services work
+- Schedules work
+- Appointments work
+- Availability works
+- Conversations work
+- Notifications work
 
 ## Website
 
--  Homepage works
--  Services page works
--  Dentist page works
--  FAQ works
--  Contact page works
--  Appointment form works
--  AI chat works
--  Mobile layout works
--  Accessibility reviewed
+- Homepage works
+- Services page works
+- Dentist page works
+- FAQ works
+- Contact page works
+- Appointment form works
+- AI chat works
+- Mobile layout works
+- Accessibility reviewed
 
 ## Admin
 
--  Login works
--  Dashboard works
--  Appointment management works
--  Calendar works
--  Dentist management works
--  Service management works
--  Schedule management works
--  Conversation management works
--  Human handoff works
+- Login works
+- Dashboard works
+- Appointment management works
+- Calendar works
+- Dentist management works
+- Service management works
+- Schedule management works
+- Conversation management works
+- Human handoff works
 
 ## AI
 
--  OpenAI integration works
--  Clinic knowledge works
--  RAG works
--  Tool calling works
--  Availability tool works
--  Appointment workflow works
--  AI does not invent appointment slots
--  AI does not diagnose
--  AI does not prescribe
--  Human handoff works
+- OpenAI integration works
+- Clinic knowledge works
+- RAG works
+- Tool calling works
+- Availability tool works
+- Appointment workflow works
+- AI does not invent appointment slots
+- AI does not diagnose
+- AI does not prescribe
+- Human handoff works
 
 ## Automation
 
--  n8n works
--  Appointment confirmation works
--  Staff notification works
--  Reminder workflow works
--  Cancellation workflow works
--  Rescheduling workflow works
--  Workflow failures are detectable
+- n8n works
+- Appointment confirmation works
+- Staff notification works
+- Reminder workflow works
+- Cancellation workflow works
+- Rescheduling workflow works
+- Workflow failures are detectable
 
 ## Messenger
 
--  Meta application configured
--  Webhook verified
--  Messages received
--  Messages stored
--  AI responds
--  Staff handoff works
--  Outgoing messages work
+- Meta application configured
+- Webhook verified
+- Messages received
+- Messages stored
+- AI responds
+- Staff handoff works
+- Outgoing messages work
 
 ## Testing
 
--  Unit tests
--  Integration tests
--  API tests
--  Authentication tests
--  Authorization tests
--  Appointment tests
--  Availability tests
--  AI safety tests
--  E2E tests
--  Webhook tests
+- Unit tests
+- Integration tests
+- API tests
+- Authentication tests
+- Authorization tests
+- Appointment tests
+- Availability tests
+- AI safety tests
+- E2E tests
+- Webhook tests
 
 ## Security
 
--  HTTPS
--  Secure cookies
--  Password hashing
--  Rate limiting
--  Input validation
--  RBAC
--  Audit logging
--  Secure secrets
--  Database backups
--  No real patient data in development
--  Production security review
+- HTTPS
+- Secure cookies
+- Password hashing
+- Rate limiting
+- Input validation
+- RBAC
+- Audit logging
+- Secure secrets
+- Database backups
+- No real patient data in development
+- Production security review
 
 ---
 
