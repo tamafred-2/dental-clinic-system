@@ -35,7 +35,7 @@ services:
       N8N_PORT: 5678
       N8N_PROTOCOL: http
       WEBHOOK_URL: http://localhost:5678/
-      GENERIC_TIMEZONE: Asia/Singapore
+      GENERIC_TIMEZONE: Asia/Manila
     volumes:
       - n8n_data:/home/node/.n8n
 

@@ -19,7 +19,7 @@ async function ensurePortIsAvailable(port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = createServer();
     server.once('error', reject);
-    server.listen(port, '::', () => {
+    server.listen(port, '0.0.0.0', () => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   });
@@ -54,11 +54,19 @@ async function bootstrap() {
     }),
   );
 
-  const port = configService.get<number>('API_PORT', 4000);
+  const configuredPort =
+    configService.get<string>('PORT') ??
+    configService.get<string>('API_PORT') ??
+    '4000';
+  const port = Number(configuredPort);
+
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('PORT or API_PORT must be a valid TCP port number.');
+  }
 
   try {
     await ensurePortIsAvailable(port);
-    await app.listen(port);
+    await app.listen(port, '0.0.0.0');
   } catch (error) {
     await app.close();
 
