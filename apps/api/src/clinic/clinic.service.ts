@@ -9,6 +9,7 @@ const publicClinicSelection = {
   address: true,
   phone: true,
   email: true,
+  timeZone: true,
   openingHours: true,
   appointmentPolicy: true,
   cancellationPolicy: true,

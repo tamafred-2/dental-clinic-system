@@ -3,110 +3,226 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { DayOfWeek, Prisma } from '@prisma/client';
+import { AppointmentStatus, DayOfWeek, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 
-const dayByIndex: DayOfWeek[] = [
-  DayOfWeek.SUNDAY,
-  DayOfWeek.MONDAY,
-  DayOfWeek.TUESDAY,
-  DayOfWeek.WEDNESDAY,
-  DayOfWeek.THURSDAY,
-  DayOfWeek.FRIDAY,
-  DayOfWeek.SATURDAY,
-];
+const dayByName: Record<string, DayOfWeek> = {
+  Sunday: DayOfWeek.SUNDAY,
+  Monday: DayOfWeek.MONDAY,
+  Tuesday: DayOfWeek.TUESDAY,
+  Wednesday: DayOfWeek.WEDNESDAY,
+  Thursday: DayOfWeek.THURSDAY,
+  Friday: DayOfWeek.FRIDAY,
+  Saturday: DayOfWeek.SATURDAY,
+};
+
+const slotIntervalMinutes = 30;
+const maximumAdvanceDays = 180;
+const maximumFuturePendingAppointments = 3;
 
 @Injectable()
 export class AppointmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateAppointmentDto) {
-    const scheduledAt = new Date(dto.scheduledAt);
+    if (dto.website) {
+      throw new BadRequestException('Unable to process appointment request.');
+    }
 
-    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+    const scheduledAt = new Date(dto.scheduledAt);
+    const now = new Date();
+    const latestAllowedDate = new Date(
+      now.getTime() + maximumAdvanceDays * 24 * 60 * 60 * 1000,
+    );
+
+    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= now) {
       throw new BadRequestException(
         'scheduledAt must be a future date and time.',
       );
     }
-
-    const [patient, dentist, service] = await Promise.all([
-      this.prisma.patient.findUnique({ where: { id: dto.patientId } }),
-      this.prisma.dentist.findUnique({
-        where: { id: dto.dentistId },
-        include: { schedules: true },
-      }),
-      this.prisma.service.findUnique({ where: { id: dto.serviceId } }),
-    ]);
-
-    if (!patient) {
-      throw new NotFoundException('Patient not found.');
-    }
-
-    if (!dentist) {
-      throw new NotFoundException('Dentist not found.');
-    }
-
-    if (!service) {
-      throw new NotFoundException('Service not found.');
-    }
-
-    if (!dentist.active) {
-      throw new BadRequestException('Dentist is not active.');
-    }
-
-    if (!service.active) {
-      throw new BadRequestException('Service is not active.');
-    }
-
-    const endAt = new Date(
-      scheduledAt.getTime() + service.durationMinutes * 60_000,
-    );
-    const day = dayByIndex[scheduledAt.getUTCDay()];
-    const schedule = dentist.schedules.find((item) => item.day === day);
-
-    if (!schedule) {
+    if (scheduledAt > latestAllowedDate) {
       throw new BadRequestException(
-        'Dentist does not work at the requested time.',
-      );
-    }
-
-    const appointmentStart = this.toMinutes(scheduledAt);
-    const appointmentEnd = this.toMinutes(endAt);
-    const scheduleStart = this.toMinutes(schedule.startTime);
-    const scheduleEnd = this.toMinutes(schedule.endTime);
-    const clinicStart = 9 * 60;
-    const clinicEnd = 18 * 60;
-
-    if (
-      appointmentStart < scheduleStart ||
-      appointmentEnd > scheduleEnd ||
-      appointmentStart < clinicStart ||
-      appointmentEnd > clinicEnd
-    ) {
-      throw new BadRequestException(
-        'The requested appointment is outside dentist or clinic hours.',
+        `Appointments can only be requested up to ${maximumAdvanceDays} days ahead.`,
       );
     }
 
     try {
       return await this.prisma.$transaction(
         async (transaction) => {
+          const clinic = await transaction.clinic.findFirst({
+            select: { id: true, timeZone: true },
+          });
+
+          if (!clinic) {
+            throw new ServiceUnavailableException(
+              'Clinic scheduling configuration is unavailable.',
+            );
+          }
+
+          const localStart = this.getLocalTime(scheduledAt, clinic.timeZone);
+          const [dentist, service, clinicRules] = await Promise.all([
+            transaction.dentist.findUnique({
+              where: { id: dto.dentistId },
+              include: { schedules: { where: { day: localStart.day } } },
+            }),
+            transaction.service.findUnique({
+              where: { id: dto.serviceId },
+            }),
+            transaction.clinic.findUnique({
+              where: { id: clinic.id },
+              include: {
+                hours: { where: { day: localStart.day } },
+                blockedDates: { where: { date: localStart.date } },
+              },
+            }),
+          ]);
+
+          if (!dentist) {
+            throw new NotFoundException('Dentist not found.');
+          }
+          if (!service) {
+            throw new NotFoundException('Service not found.');
+          }
+          if (!clinicRules) {
+            throw new ServiceUnavailableException(
+              'Clinic scheduling configuration is unavailable.',
+            );
+          }
+          if (!dentist.active) {
+            throw new BadRequestException('Dentist is not active.');
+          }
+          if (!service.active) {
+            throw new BadRequestException('Service is not active.');
+          }
+
+          const dentistSchedule = dentist.schedules[0];
+          const clinicHours = clinicRules.hours[0];
+
+          if (
+            !dentistSchedule ||
+            !clinicHours ||
+            clinicRules.blockedDates.length > 0
+          ) {
+            this.throwSlotUnavailable();
+          }
+
+          const endAt = new Date(
+            scheduledAt.getTime() + service.durationMinutes * 60_000,
+          );
+          const localEnd = this.getLocalTime(endAt, clinic.timeZone);
+          const availableStart = Math.max(
+            this.toMinutes(dentistSchedule.startTime),
+            this.toMinutes(clinicHours.startTime),
+          );
+          const availableEnd = Math.min(
+            this.toMinutes(dentistSchedule.endTime),
+            this.toMinutes(clinicHours.endTime),
+          );
+          const startsOnSlotBoundary =
+            (localStart.minutes - availableStart) % slotIntervalMinutes === 0;
+
+          if (
+            localEnd.date !== localStart.date ||
+            localStart.minutes < availableStart ||
+            localEnd.minutes > availableEnd ||
+            !startsOnSlotBoundary
+          ) {
+            this.throwSlotUnavailable();
+          }
+
           const overlappingAppointment =
             await transaction.appointment.findFirst({
               where: {
                 dentistId: dentist.id,
-                status: { notIn: ['CANCELLED'] },
+                status: { not: AppointmentStatus.CANCELLED },
                 scheduledAt: { lt: endAt },
                 endAt: { gt: scheduledAt },
               },
+              select: { id: true },
             });
 
           if (overlappingAppointment) {
-            throw new ConflictException(
-              'The dentist is no longer available at that time.',
-            );
+            this.throwSlotUnavailable();
+          }
+
+          const existingPatient = await transaction.patient.findUnique({
+            where: { email: dto.email },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              phone: true,
+            },
+          });
+          let patient: { id: string };
+
+          if (existingPatient) {
+            const detailsMatch =
+              this.normalizeName(existingPatient.firstName) ===
+                this.normalizeName(dto.firstName) &&
+              this.normalizeName(existingPatient.lastName) ===
+                this.normalizeName(dto.lastName) &&
+              this.normalizePhone(existingPatient.phone) ===
+                this.normalizePhone(dto.phone);
+
+            if (!detailsMatch) {
+              this.throwContactVerificationRequired();
+            }
+            patient = { id: existingPatient.id };
+          } else {
+            try {
+              patient = await transaction.patient.create({
+                data: {
+                  firstName: dto.firstName,
+                  lastName: dto.lastName,
+                  email: dto.email,
+                  phone: dto.phone,
+                },
+                select: { id: true },
+              });
+            } catch (error) {
+              if (
+                error instanceof Prisma.PrismaClientKnownRequestError &&
+                error.code === 'P2002'
+              ) {
+                this.throwContactVerificationRequired();
+              }
+              throw error;
+            }
+          }
+
+          const [patientScheduleConflict, futurePendingCount] =
+            await Promise.all([
+              transaction.appointment.findFirst({
+                where: {
+                  patientId: patient.id,
+                  status: { not: AppointmentStatus.CANCELLED },
+                  scheduledAt: { lt: endAt },
+                  endAt: { gt: scheduledAt },
+                },
+                select: { id: true },
+              }),
+              transaction.appointment.count({
+                where: {
+                  patientId: patient.id,
+                  status: AppointmentStatus.PENDING,
+                  scheduledAt: { gte: now },
+                },
+              }),
+            ]);
+
+          if (patientScheduleConflict) {
+            this.throwSlotUnavailable();
+          }
+          if (futurePendingCount >= maximumFuturePendingAppointments) {
+            throw new ConflictException({
+              message:
+                'This patient already has several pending appointment requests. Please contact the clinic for assistance.',
+              code: 'APPOINTMENT_PENDING_LIMIT_REACHED',
+            });
           }
 
           return transaction.appointment.create({
@@ -116,19 +232,16 @@ export class AppointmentsService {
               serviceId: service.id,
               scheduledAt,
               endAt,
-              notes: dto.notes,
+              status: AppointmentStatus.PENDING,
             },
             select: {
               id: true,
               status: true,
               scheduledAt: true,
               endAt: true,
-              patient: {
-                select: { id: true, firstName: true, lastName: true },
-              },
-              dentist: { select: { id: true, name: true, title: true } },
+              dentist: { select: { name: true, title: true } },
               service: {
-                select: { id: true, name: true, durationMinutes: true },
+                select: { name: true, durationMinutes: true },
               },
             },
           });
@@ -139,26 +252,83 @@ export class AppointmentsService {
       if (error instanceof ConflictException) {
         throw error;
       }
-
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
+        (error.code === 'P2002' || error.code === 'P2034')
       ) {
-        throw new ConflictException(
-          'The dentist is no longer available at that time.',
-        );
+        this.throwSlotUnavailable();
       }
-
       throw error;
     }
   }
 
-  private toMinutes(value: Date | string) {
-    if (value instanceof Date) {
-      return value.getUTCHours() * 60 + value.getUTCMinutes();
-    }
+  private throwSlotUnavailable(): never {
+    throw new ConflictException({
+      message: 'Selected appointment time is no longer available.',
+      code: 'APPOINTMENT_SLOT_UNAVAILABLE',
+    });
+  }
 
+  private throwContactVerificationRequired(): never {
+    throw new ConflictException({
+      message:
+        'The contact details could not be verified. Please contact the clinic for assistance.',
+      code: 'APPOINTMENT_CONTACT_VERIFICATION_REQUIRED',
+    });
+  }
+
+  private normalizeName(value: string) {
+    return value.trim().toLocaleLowerCase('en');
+  }
+
+  private normalizePhone(value: string) {
+    return value.replace(/\D/g, '');
+  }
+
+  private toMinutes(value: string) {
     const [hours, minutes] = value.split(':').map(Number);
     return hours * 60 + minutes;
+  }
+
+  private getLocalTime(date: Date, timeZone: string) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(date);
+      const values = Object.fromEntries(
+        parts
+          .filter((part) => part.type !== 'literal')
+          .map((part) => [part.type, part.value]),
+      );
+      const day = dayByName[values.weekday];
+
+      if (
+        !day ||
+        values.year === undefined ||
+        values.month === undefined ||
+        values.day === undefined ||
+        values.hour === undefined ||
+        values.minute === undefined
+      ) {
+        throw new Error('Missing clinic time components.');
+      }
+
+      return {
+        day,
+        date: `${values.year}-${values.month}-${values.day}`,
+        minutes: Number(values.hour) * 60 + Number(values.minute),
+      };
+    } catch {
+      throw new ServiceUnavailableException(
+        'Clinic timezone configuration is invalid.',
+      );
+    }
   }
 }

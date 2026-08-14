@@ -5,8 +5,10 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AiModule } from './ai/ai.module';
+import { AvailabilityModule } from './availability/availability.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AuditModule } from './audit/audit.module';
+import { BlockedDatesModule } from './blocked-dates/blocked-dates.module';
 import { AuthModule } from './auth/auth.module';
 import { ClinicModule } from './clinic/clinic.module';
 import { ConversationsModule } from './conversations/conversations.module';
@@ -35,12 +37,14 @@ import { PrismaModule } from './prisma/prisma.module';
       },
     ]),
     PrismaModule,
+    AvailabilityModule,
     AuthModule,
     UsersModule,
     PatientsModule,
     DentistsModule,
     ServicesModule,
     AppointmentsModule,
+    BlockedDatesModule,
     SchedulesModule,
     ClinicModule,
     FaqModule,
