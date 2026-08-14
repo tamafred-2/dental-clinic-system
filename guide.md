@@ -1001,6 +1001,8 @@ This also allows the AI knowledge base to use the same information.
 
 The MVP stores the appointment and cancellation policies as clinic-managed public text. Only an `ADMIN` can update them; later appointment workflows may enforce their rules separately.
 
+Store the clinic's IANA timezone (for example, `Asia/Manila`) with the clinic record. Weekly schedules and availability must be interpreted in this clinic timezone, while appointment timestamps are stored as UTC instants in PostgreSQL.
+
 ---
 
 ## Clinic Location and Google Maps
@@ -1204,6 +1206,8 @@ Available Slots
 
 ```
 
+For the MVP, store clinic hours as structured weekday records and store blocked full-day closures using a local clinic date in `YYYY-MM-DD` format. Do not infer scheduling rules from the display-only `openingHours` text.
+
 ---
 
 ## Example
@@ -1359,6 +1363,40 @@ Backend validation
 ```
 
 Both should exist.
+
+---
+
+## Appointment request abuse protection
+
+The appointment form is a public write endpoint and must be protected against automated and repeated submissions.
+
+The free MVP protection should use several layers:
+
+```
+Frontend honeypot
+        +
+Backend rate limiting
+        +
+Pending-request limits
+        +
+Server-validated bot challenge before public launch
+
+```
+
+Do not rely on client-side JavaScript alone. A script can call the API directly and bypass the visible form.
+
+Detailed requirements are defined in [Free Appointment Anti-Spam Hardening](#free-appointment-anti-spam-hardening).
+
+Current implementation status:
+
+- Complete: frontend required-field, email, phone, date, time, and consent validation
+- Complete: DTO validation and server-side appointment business rules
+- Complete: `5` appointment submissions per minute per API throttling identity
+- Complete: hidden `website` honeypot rejected before database work
+- Complete: no overlapping appointments for the patient or dentist
+- Complete: maximum of `3` future `PENDING` requests for one patient
+- Before public deployment: mandatory Cloudflare Turnstile server verification
+- When running multiple API instances: shared Redis-backed rate limits
 
 ---
 
@@ -2006,6 +2044,8 @@ n8n / Gmail
 
 This prevents slow operations from blocking API requests.
 
+Background-job Redis has different reliability requirements from a disposable response cache. BullMQ queue data must not be evicted before jobs complete, so use a separate durable Redis database or instance with persistence and a `noeviction` policy. Do not place important queues on a free cache service that may discard data. Section 39 compares the hosted Redis options and defines the cache-versus-queue deployment rules.
+
 ---
 
 # 33. Security
@@ -2061,6 +2101,96 @@ Contact forms
 Messenger webhooks
 
 ```
+
+---
+
+## Free Appointment Anti-Spam Hardening
+
+Appointment spam protection should remain free for the MVP and should not require paid infrastructure.
+
+Use these layers:
+
+### 1. Backend rate limiting
+
+Keep a strict limit on `POST /appointments`, separate from ordinary read endpoints. Consider both a short burst limit and a longer submission window so a bot cannot continue sending requests slowly.
+
+The backend must return `429 Too Many Requests` when the limit is exceeded. The frontend should show a neutral retry-later message.
+
+The in-memory NestJS throttler is acceptable for one API instance during development. If the API later runs on multiple instances, use shared Redis-backed limiting or an equivalent hosting-layer limit. Redis is optional until that deployment model is needed.
+
+### 2. Honeypot field
+
+Add a visually hidden, non-medical form field that a normal patient never fills in. Reject the request when this field contains a value.
+
+The honeypot is only an inexpensive first filter. It must not replace rate limiting or backend validation.
+
+### 3. Database request rules
+
+Before creating another appointment request, check for suspicious duplication.
+
+Examples:
+
+```
+Same patient + same appointment time
+Too many future PENDING requests for one contact
+Repeated identical requests in a short period
+
+```
+
+Use a configurable limit that still permits legitimate family bookings. Staff-created appointments may use a separate authorized workflow.
+
+### 4. Cloudflare Turnstile before public launch
+
+Cloudflare currently provides a free Turnstile plan suitable for small and medium applications. It can be used without moving the website behind Cloudflare's CDN.
+
+Implementation requirements:
+
+```
+Browser obtains Turnstile token
+        |
+        v
+Token is sent with appointment request
+        |
+        v
+NestJS validates token with Siteverify
+        |
+        v
+Only a valid token may reach appointment creation
+
+```
+
+Client-side rendering of the widget is not sufficient. The NestJS API must validate every token with Cloudflare and reject invalid, expired, missing, or replayed tokens. Production should fail closed if verification cannot be completed.
+
+Environment variables:
+
+```env
+NEXT_PUBLIC_TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+```
+
+Use Cloudflare's official testing keys on localhost. Never expose `TURNSTILE_SECRET_KEY` to Next.js or commit it to Git.
+
+Official references:
+
+- [Cloudflare Turnstile plans](https://developers.cloudflare.com/turnstile/plans/)
+- [Server-side token validation](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
+- [Turnstile testing keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)
+
+### Recommended rollout
+
+```
+Development
+  Rate limiting + honeypot + database duplicate rules
+
+Before public launch
+  Add Turnstile with mandatory server-side validation
+
+Multiple API instances
+  Add shared Redis-backed rate limiting
+
+```
+
+No single anti-spam measure is sufficient by itself. Keep the appointment service as the final source of truth.
 
 ---
 
@@ -2426,59 +2556,387 @@ Conversations
 
 # 39. Production Deployment
 
-Production should separate infrastructure from development.
+This project can be deployed as a free public demonstration, but the free plan described below must not be treated as a production system for real patient data. Free services can sleep, impose small quotas, have limited backups, and provide no production service-level guarantee.
 
-Example:
+Use synthetic demonstration data until the clinic owner has approved a paid production architecture, privacy requirements, backups, monitoring, and data-processing agreements.
 
+## Recommended low-cost architecture
+
+The simplest free demonstration deployment is:
+
+```text
+                         Internet
+                            |
+              +-------------+-------------+
+              |                           |
+              v                           v
+      Vercel - Next.js             Render - NestJS
+              |                           |
+              |              +------------+------------+
+              |              |                         |
+              +------------> Neon PostgreSQL     Upstash Redis
+                             source of truth       cache/rate limits
+
+      Cloudflare Turnstile verifies appointment submissions.
+      n8n remains local until its workflows are needed online.
 ```
-                    Internet
-                       |
-                       v
-                 Reverse Proxy
-                       |
-             +---------+---------+
-             |                   |
-             v                   v
-          Next.js             NestJS
-                                 |
-                   +-------------+-------------+
-                   |             |             |
-                   v             v             v
-               PostgreSQL       Redis         n8n
 
+The services have different responsibilities:
+
+| Component | Recommended free provider | Purpose | Important free-plan limitation |
+| --- | --- | --- | --- |
+| Next.js website | Vercel Hobby | Public website | Intended for personal/non-commercial use; review the plan before using it for a paying clinic |
+| NestJS API | Render Free web service | Backend API | Spins down after inactivity and can have a noticeable cold start; not intended for production |
+| PostgreSQL | Neon Free | Permanent system of record | Limited storage and compute; use a paid plan and verified backups for a real clinic |
+| Redis-compatible cache | Upstash Redis Free | Cache and shared rate-limit state | Command, storage, and bandwidth limits; free tier has no production SLA |
+| Form abuse check | Cloudflare Turnstile Free | Appointment anti-bot challenge | The server must verify every token; it is not a replacement for rate limiting |
+| n8n | Local Docker initially | Automation development | A local computer cannot reliably receive public production webhooks |
+
+Provider plans and limits change. Recheck the official [Vercel Hobby](https://vercel.com/docs/plans/hobby), [Render Free](https://render.com/docs/free), [Neon pricing](https://neon.com/pricing), [Upstash Redis pricing](https://upstash.com/pricing/redis), and [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) pages before deployment. The values in this guide were verified on August 15, 2026.
+
+Cloudflare Turnstile is not tied to Cloudflare hosting. The website can run on Vercel and the API on Render while Turnstile protects the appointment form.
+
+## Demonstration versus real production
+
+### Free demonstration
+
+The free architecture is appropriate for:
+
+- Portfolio demonstrations
+- Sales presentations
+- Synthetic clinic and appointment data
+- Early functional testing
+- Low-traffic previews
+
+Expect API cold starts, limited storage, limited Redis commands, and reduced backup options.
+
+### Real clinic production
+
+Before accepting real patient information, require at minimum:
+
+- Paid services with a suitable availability commitment
+- A custom domain and HTTPS
+- Automated database backups and a tested restore procedure
+- Monitoring, alerting, and centralized logs
+- A privacy and security review for applicable Philippine laws and clinic obligations
+- Provider contracts or data-processing agreements where required
+- Data retention and deletion rules
+- Incident response and credential rotation procedures
+- Load, security, and recovery testing
+
+Redis must never become the permanent store for appointments, patients, or clinic configuration. PostgreSQL remains the source of truth.
+
+## Deployment prerequisites
+
+Run these locally from the project root before deploying:
+
+```powershell
+npm install
+npx prisma generate
+npm run lint
+npm run test -w @dental/api
+npm run build
 ```
 
----
+The API bootstrap is deployment-ready: it prefers Render's injected `PORT`, falls back to the local `API_PORT`, validates the number, and listens on `0.0.0.0`:
 
-## Production requirements
+```typescript
+const configuredPort =
+  configService.get<string>('PORT') ??
+  configService.get<string>('API_PORT') ??
+  '4000';
+const port = Number(configuredPort);
 
-At minimum:
+await app.listen(port, '0.0.0.0');
+```
 
-- Production domain
-- HTTPS
-- Production database
-- Secure environment variables
-- Database backups
-- Monitoring
-- Logging
-- Rate limiting
-- Authentication
-- Security review
+Keep `API_PORT=4000` for local development. Do not manually define Render's `PORT`; Render supplies it.
 
----
+The existing `GET /api` endpoint can be used as the Render health check.
+
+## Step 1 - Create the hosted PostgreSQL database
+
+Neon Free is preferable to Render Free PostgreSQL for the demonstration because Render's free PostgreSQL database expires after 30 days. Create a Neon project in a region close to the API when available.
+
+1. Create the Neon project.
+2. Copy its pooled connection string.
+3. Confirm that the hostname includes the pooler when using Neon's pooled connection.
+4. Confirm that TLS is enabled, normally with `sslmode=require`.
+5. Save it as `DATABASE_URL` in Render only.
+
+Example shape:
+
+```dotenv
+DATABASE_URL=postgresql://USER:PASSWORD@HOST-pooler.REGION.aws.neon.tech/DATABASE?sslmode=require
+```
+
+Never commit the real connection string. See [Neon connection pooling](https://neon.com/docs/connect/connection-pooling) for the current connection format.
+
+## Step 2 - Deploy the NestJS API to Render
+
+Create a Render Web Service from this Git repository.
+
+Use the repository root as the service root because the npm lockfile, Prisma schema, migrations, and Prisma configuration are located there.
+
+Recommended Render settings:
+
+```text
+Runtime: Node
+Build command: npm install && npx prisma generate && npm run build -w @dental/api
+Start command: npx prisma migrate deploy && npm run start:prod -w @dental/api
+Health check path: /api
+```
+
+Add these Render environment variables:
+
+```dotenv
+NODE_ENV=production
+DATABASE_URL=<Neon pooled TLS connection string>
+WEB_ORIGIN=https://<your-vercel-project>.vercel.app
+SESSION_TTL_DAYS=7
+REDIS_URL=<Upstash TLS connection string, after Redis integration>
+TURNSTILE_SECRET_KEY=<server-side secret, after Turnstile setup>
+```
+
+Do not add `NEXT_PUBLIC_*` variables to Render. Those belong to the web deployment.
+
+Render requires a web service to listen on `0.0.0.0` and the injected `PORT`; see [Render port binding](https://render.com/docs/web-services#port-binding).
+
+The start command applies committed migrations with `prisma migrate deploy`. Do not use `prisma migrate dev` on a deployed database.
+
+## Step 3 - Deploy the Next.js website to Vercel
+
+Import the same Git repository into Vercel and configure the project as a monorepo application.
+
+Recommended Vercel settings:
+
+```text
+Root Directory: apps/web
+Framework Preset: Next.js
+Build Command: next build
+```
+
+Add this Vercel environment variable:
+
+```dotenv
+NEXT_PUBLIC_API_URL=https://<your-render-api>.onrender.com
+```
+
+Do not include a trailing `/api` because the frontend API helper already adds it.
+
+After Vercel creates the final website URL, update Render's `WEB_ORIGIN` to that exact HTTPS origin and redeploy the API. Review [Vercel monorepo configuration](https://vercel.com/docs/monorepos) if automatic detection does not select `apps/web`.
+
+## Important authentication domain rule
+
+The admin authentication uses a secure HTTP-only cookie. A Vercel preview hostname and a Render hostname are different sites. The current strict cookie policy can therefore block admin sessions when the browser calls the API across those unrelated provider domains.
+
+The public website and appointment endpoints can still be tested in a free demo, but do not weaken the production cookie merely to make unrelated preview domains work.
+
+For a real clinic, use one custom parent domain:
+
+```text
+https://www.example-clinic.com       -> Next.js
+https://api.example-clinic.com       -> NestJS
+```
+
+Then set:
+
+```dotenv
+WEB_ORIGIN=https://www.example-clinic.com
+NEXT_PUBLIC_API_URL=https://api.example-clinic.com
+```
+
+This keeps the web and API under the same registrable site while preserving secure cookies and an exact CORS allowlist.
+
+## Step 4 - Deploy Redis
+
+### Current application status
+
+Redis is present in `docker-compose.yml` for local infrastructure and `.env.example` contains `REDIS_URL`, but the NestJS application does not yet install a Redis client or read/write cache entries. Deploying a Redis database alone will not automatically cache requests.
+
+The current system is safe without hosted Redis because PostgreSQL is the source of truth and NestJS throttling currently protects the single API process. Hosted Redis becomes useful for:
+
+- Shared rate-limit counters when more than one API instance is running
+- Frequently read public clinic, service, dentist, and FAQ data
+- Short-lived distributed locks where carefully designed
+- Future BullMQ background jobs, using a separate durable Redis configuration
+
+### Verified Redis hosting choices
+
+| Provider | Free allowance verified August 15, 2026 | Suitable use here | Decision |
+| --- | --- | --- | --- |
+| Upstash Redis Free | 256 MB, 500,000 commands/month, 10 GB monthly bandwidth | Demo cache and shared rate limits; TLS endpoint; Singapore region available | Recommended free option |
+| Render Free Key Value | Redis-compatible/Valkey service, but free data is in-memory and can be lost on restart | Disposable cache only | Do not use for durable queues or important state |
+| Redis Cloud Free | 30 MB and one free database; free backup/export is unavailable | Learning or a very small cache | Valid alternative, but smaller than Upstash Free |
+
+Official references: [Upstash Redis pricing](https://upstash.com/pricing/redis), [Upstash regions and global databases](https://upstash.com/docs/redis/features/globaldatabase), [Render Key Value](https://render.com/docs/key-value), [Render free limitations](https://render.com/docs/free), [Redis Cloud free database](https://redis.io/docs/latest/operate/rc/databases/create-database/create-free-database/), and [Redis Cloud backups](https://redis.io/docs/latest/operate/rc/databases/back-up-data/).
+
+### Recommended Upstash setup
+
+1. Create an Upstash Redis database.
+2. Choose `ap-southeast-1` (Singapore) when it is available and when it is close to the API and database.
+3. Enable TLS and copy the Redis connection URL from the database console.
+4. Add it to Render as the secret `REDIS_URL`.
+5. Never put the Redis password or REST token in a `NEXT_PUBLIC_*` variable.
+6. Keep the local `.env` value for Docker development.
+
+Local development:
+
+```dotenv
+REDIS_URL=redis://localhost:6379
+```
+
+Hosted connection shape:
+
+```dotenv
+REDIS_URL=rediss://default:PASSWORD@HOST:PORT
+```
+
+The extra `s` in `rediss://` means the Redis connection uses TLS. Do not paste a real password into this guide, Git, screenshots, or frontend code.
+
+For this long-running NestJS API, a normal TCP Redis client is the simplest future integration. Upstash also offers a REST client for serverless runtimes; choose one interface deliberately instead of configuring both. See [connecting to Upstash Redis](https://upstash.com/docs/redis/howto/connect-with-upstash-redis).
+
+### Recommended cache design
+
+Use the cache-aside pattern:
+
+```text
+API request
+    |
+    v
+Read Redis key
+    |
+    +-- cache hit --> return cached public response
+    |
+    +-- cache miss -> read PostgreSQL -> cache with TTL -> return response
+```
+
+Suggested starting keys and TTLs:
+
+| Key | Suggested TTL | Invalidate when |
+| --- | ---: | --- |
+| `clinic:public:v1` | 300 seconds | Clinic information or policies change |
+| `services:public:v1` | 300 seconds | A service is created, updated, reordered, activated, or disabled |
+| `dentists:public:v1` | 300 seconds | A dentist is created, updated, reordered, activated, or disabled |
+| `faqs:public:v1` | 600 seconds | An FAQ is created, updated, reordered, activated, or disabled |
+
+The API should delete the relevant cache key only after a successful database update. A later read repopulates it. Version suffixes such as `v1` allow a safe cache format change.
+
+Do not initially cache:
+
+- Appointment creation responses
+- Admin authentication or session secrets
+- Password hashes, cookies, Turnstile tokens, or API credentials
+- Patient records, appointment notes, or medical information
+- Availability results until invalidation is thoroughly tested
+
+If availability is cached later, use a very short TTL such as 15 to 30 seconds and invalidate it whenever an appointment, schedule, clinic-hours record, or blocked date changes. PostgreSQL transaction rules must still prevent double-booking; Redis is never the booking authority.
+
+### Redis failure behavior
+
+The cache must improve performance without becoming a new single point of failure.
+
+For public read caching:
+
+1. Attempt the Redis read.
+2. If Redis is unavailable, log a sanitized warning.
+3. Read from PostgreSQL and return the response.
+4. Do not fail a clinic, dentist, service, or FAQ request only because the cache is down.
+
+For distributed rate limiting, define whether an outage fails open or closed based on endpoint risk. A public clinic page may fail open, while repeated login or appointment attempts should retain a safe local fallback and monitoring.
+
+Track Redis command usage, hit rate, latency, connection failures, storage, and provider quota. Cache values must have an expiry so stale entries and abandoned keys do not grow indefinitely.
+
+### Cache Redis and BullMQ are different workloads
+
+Do not assume one free cache database is automatically safe for future background jobs.
+
+- Cache entries are disposable and commonly use eviction plus TTLs.
+- BullMQ job data must survive long enough to complete, retry, and be inspected.
+- BullMQ recommends persistence and a `noeviction` policy because arbitrary job-key eviction can corrupt queue behavior.
+- Upstash supports BullMQ, but BullMQ polls Redis even while idle and may consume the command-based free allowance quickly.
+
+When BullMQ is introduced, use a separate Redis database or instance configured for durable queues. Do not run important BullMQ queues on Render Free Key Value because free data may be lost. Review the official [BullMQ production guidance](https://docs.bullmq.io/guide/going-to-production) and [Upstash BullMQ integration](https://upstash.com/docs/redis/integrations/bullmq) before enabling workers.
+
+For the current MVP, PostgreSQL plus direct request processing is the safer option. Add the Redis cache first; introduce BullMQ only when background jobs in Section 32 are actually implemented and a suitable durable plan has been selected.
+
+## Step 5 - Configure Cloudflare Turnstile
+
+Create Turnstile after the Vercel hostname or custom domain exists so the allowed hostname can be restricted correctly.
+
+1. Add the production website hostname to the Turnstile widget.
+2. Put the site key in the web deployment.
+3. Put the secret key in Render only.
+4. Send the browser token with the appointment request.
+5. Verify the token server-side before appointment business logic.
+6. Keep rate limiting, the honeypot, validation, and database duplicate checks enabled.
+
+Turnstile is one layer of the free appointment anti-spam controls described in Section 33, not a complete replacement for them.
+
+## Database migration and seed policy
+
+Commit Prisma migrations to Git and run this against the deployed database:
+
+```powershell
+npx prisma migrate deploy
+```
+
+Never run this against production:
+
+```powershell
+npx prisma migrate dev
+```
+
+The existing seed contains synthetic demonstration content. It may be run once for a private demonstration database, but do not automatically seed every API deployment and do not seed a real clinic production database.
+
+## Deployment order
+
+Use this order because each component supplies information needed by the next:
+
+1. Verify local lint, tests, and builds.
+2. Create Neon PostgreSQL.
+3. Deploy the Render API and run migrations.
+4. Deploy the Vercel website with the Render API URL.
+5. Update Render's exact `WEB_ORIGIN` and redeploy.
+6. Create Upstash Redis and add `REDIS_URL` when the cache integration is implemented.
+7. Configure Turnstile for the final website hostname.
+8. Run deployment smoke tests.
+9. Add custom web and API domains before real clinic use.
+
+## Deployment smoke tests
+
+Use synthetic data only. Verify:
+
+```text
+GET  <API_URL>/api
+GET  <API_URL>/api/clinic
+GET  <API_URL>/api/services
+GET  <API_URL>/api/dentists
+GET  <API_URL>/api/appointments/availability?...valid query...
+POST <API_URL>/api/appointments
+```
+
+Also confirm:
+
+- The website loads on mobile and desktop.
+- Browser requests use HTTPS and the expected API hostname.
+- CORS accepts the deployed website and rejects unrelated origins.
+- Appointment validation and anti-spam controls still work.
+- Secrets do not appear in client JavaScript, browser storage, Git, or logs.
+- Redis failure falls back to PostgreSQL for cacheable public reads after caching is implemented.
+- Admin cookies work on the final custom-domain arrangement.
 
 ## Environment separation
 
-Use separate environments:
+Use different credentials and databases for each environment:
 
+```text
+Development -> local Docker and synthetic data
+Staging     -> hosted test services and synthetic data
+Production  -> paid/reviewed services and real clinic configuration
 ```
-Development
-Staging
-Production
 
-```
-
-Do not use the production database during development.
+Never connect local development or automated tests to the real production database or production Redis instance.
 
 ---
 
