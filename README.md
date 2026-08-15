@@ -361,7 +361,16 @@ Create a local `.env` file.
 Example:
 
 ```env
-DATABASE_URL=
+NODE_ENV=development
+
+NEXT_PUBLIC_API_URL=http://localhost:4000
+WEB_ORIGIN=http://localhost:3000
+
+API_PORT=4000
+API_HOST=127.0.0.1
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dental_clinic
+SESSION_TTL_DAYS=7
 
 OPENAI_API_KEY=
 
@@ -376,8 +385,6 @@ META_VERIFY_TOKEN=
 N8N_WEBHOOK_URL=
 
 REDIS_URL=
-
-SESSION_SECRET=
 ```
 
 Never commit `.env` to GitHub.
