@@ -233,6 +233,7 @@ export class AppointmentsService {
               scheduledAt,
               endAt,
               status: AppointmentStatus.PENDING,
+              privacyConsentAt: now,
             },
             select: {
               id: true,

@@ -166,7 +166,16 @@ describe('AppointmentsService', () => {
           serviceId: dto.serviceId,
           scheduledAt,
           status: AppointmentStatus.PENDING,
+          privacyConsentAt: expect.any(Date),
         }),
+        select: {
+          id: true,
+          status: true,
+          scheduledAt: true,
+          endAt: true,
+          dentist: { select: { name: true, title: true } },
+          service: { select: { name: true, durationMinutes: true } },
+        },
       }),
     );
   });
