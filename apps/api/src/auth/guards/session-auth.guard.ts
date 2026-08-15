@@ -33,7 +33,19 @@ export class SessionAuthGuard implements CanActivate {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const session = await this.prisma.session.findUnique({
       where: { tokenHash },
-      include: { user: true },
+      select: {
+        revokedAt: true,
+        expiresAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            active: true,
+          },
+        },
+      },
     });
 
     if (

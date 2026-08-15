@@ -1,10 +1,8 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ConfigService } from '@nestjs/config';
-import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
 import { createServer } from 'node:net';
 import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
 
 function isAddressInUseError(error: unknown): error is NodeJS.ErrnoException {
   return (
@@ -15,11 +13,14 @@ function isAddressInUseError(error: unknown): error is NodeJS.ErrnoException {
   );
 }
 
-async function ensurePortIsAvailable(port: number): Promise<void> {
+async function ensurePortIsAvailable(
+  port: number,
+  host: string,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = createServer();
     server.once('error', reject);
-    server.listen(port, '0.0.0.0', () => {
+    server.listen(port, host, () => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   });
@@ -27,32 +28,7 @@ async function ensurePortIsAvailable(port: number): Promise<void> {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
-  const isProduction = configService.get('NODE_ENV') === 'production';
-  const webOrigin: string =
-    configService.get('WEB_ORIGIN') ?? 'http://localhost:3000';
-
-  if (isProduction) {
-    const expressApp = app.getHttpAdapter().getInstance() as {
-      set(setting: string, value: number): void;
-    };
-    expressApp.set('trust proxy', 1);
-  }
-
-  app.setGlobalPrefix('api');
-  app.enableCors({
-    origin: webOrigin,
-    credentials: true,
-  });
-  app.use(helmet());
-  app.use(cookieParser());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  const { configService, isProduction } = configureApp(app);
 
   const configuredPort =
     configService.get<string>('PORT') ??
@@ -63,10 +39,13 @@ async function bootstrap() {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error('PORT or API_PORT must be a valid TCP port number.');
   }
+  const host =
+    configService.get<string>('API_HOST') ??
+    (isProduction ? '0.0.0.0' : '127.0.0.1');
 
   try {
-    await ensurePortIsAvailable(port);
-    await app.listen(port, '0.0.0.0');
+    await ensurePortIsAvailable(port, host);
+    await app.listen(port, host);
   } catch (error) {
     await app.close();
 

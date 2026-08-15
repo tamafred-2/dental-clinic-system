@@ -29,10 +29,21 @@ describe('AuthService', () => {
       passwordHash: await argon2.hash('CorrectPassword!2026'),
     });
 
-    const result = await service.login(' ADMIN@example.test ', 'CorrectPassword!2026');
+    const result = await service.login(
+      ' ADMIN@example.test ',
+      'CorrectPassword!2026',
+    );
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'admin@example.test' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        active: true,
+        passwordHash: true,
+      },
     });
     expect(result.token).toMatch(/^[a-f0-9]{64}$/);
     expect(prisma.session.create).toHaveBeenCalledWith({
@@ -52,9 +63,9 @@ describe('AuthService', () => {
   it('returns the same generic error for an unknown account', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
 
-    await expect(service.login('missing@example.test', 'WrongPassword!2026')).rejects.toEqual(
-      new UnauthorizedException('Invalid email or password.'),
-    );
+    await expect(
+      service.login('missing@example.test', 'WrongPassword!2026'),
+    ).rejects.toEqual(new UnauthorizedException('Invalid email or password.'));
   });
 
   it('revokes an existing session by its token hash', async () => {

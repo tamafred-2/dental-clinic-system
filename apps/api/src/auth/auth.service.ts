@@ -14,6 +14,14 @@ export class AuthService {
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        active: true,
+        passwordHash: true,
+      },
     });
 
     // Perform a hash operation even when the account is absent to reduce account-enumeration timing signals.
