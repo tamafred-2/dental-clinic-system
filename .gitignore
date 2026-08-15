@@ -15,7 +15,3 @@ apps/api/src/generated/
 
 # Logs
 npm-debug.log*
-
-# Local internal documentation
-/guide.md
-/OPERATIONS.md
