@@ -49,11 +49,11 @@ Do not accept real patient information on a free demonstration deployment. Real 
 
 Use these environment boundaries:
 
-| Environment | Data | Infrastructure |
-| --- | --- | --- |
-| Development | Synthetic only | Local Docker and local applications |
-| Staging/demo | Synthetic only | Hosted preview services |
-| Production | Real data only after approval | Paid and reviewed services |
+| Environment  | Data                          | Infrastructure                      |
+| ------------ | ----------------------------- | ----------------------------------- |
+| Development  | Synthetic only                | Local Docker and local applications |
+| Staging/demo | Synthetic only                | Hosted preview services             |
+| Production   | Real data only after approval | Paid and reviewed services          |
 
 PostgreSQL is always the source of truth. Redis must never become the permanent store for patients or appointments.
 
@@ -204,6 +204,8 @@ Rules:
 
 OpenAI, Gmail, Meta, n8n, Turnstile, and hosted Redis variables should remain empty until their corresponding integration is implemented and tested.
 
+The knowledge index uses the free local embedding provider by default. Set `KNOWLEDGE_EMBEDDING_PROVIDER=openai` only when an OpenAI key is configured, then run the protected knowledge reindex endpoint so stored vectors match the selected model.
+
 ---
 
 ## 7. Docker services
@@ -309,15 +311,15 @@ Do not start a second API while port 4000 is already occupied.
 
 ## 10. Local addresses
 
-| Component | Address | Purpose |
-| --- | --- | --- |
-| Website | `http://localhost:3000` | Public clinic website |
-| Admin login | `http://localhost:3000/admin/login` | Staff sign-in |
-| API health | `http://localhost:4000/api` | API readiness check |
-| PostgreSQL | `localhost:5432` | Database connection, not a browser page |
-| Redis | `localhost:6379` | Cache endpoint, not a browser page |
-| n8n | `http://localhost:5678` | Local automation UI |
-| Prisma Studio | Printed by `npx prisma studio` | Local database viewer |
+| Component     | Address                             | Purpose                                 |
+| ------------- | ----------------------------------- | --------------------------------------- |
+| Website       | `http://localhost:3000`             | Public clinic website                   |
+| Admin login   | `http://localhost:3000/admin/login` | Staff sign-in                           |
+| API health    | `http://localhost:4000/api`         | API readiness check                     |
+| PostgreSQL    | `localhost:5432`                    | Database connection, not a browser page |
+| Redis         | `localhost:6379`                    | Cache endpoint, not a browser page      |
+| n8n           | `http://localhost:5678`             | Local automation UI                     |
+| Prisma Studio | Printed by `npx prisma studio`      | Local database viewer                   |
 
 `localhost:3000` is the frontend. `localhost:4000` is the backend API. Prisma Studio is only a database administration viewer, not the backend itself.
 
@@ -414,10 +416,18 @@ Current dashboard capabilities:
 - Cancel with a required reason.
 - Mark completed or no-show.
 - Find live availability and reschedule.
+- Open the channel-independent conversation inbox.
+- Filter WEBSITE and FACEBOOK_MESSENGER records by status or assignment.
+- Claim, release, close, and store attributable staff responses.
+- Generate a bounded AI response for an unanswered patient message.
+- Generate bounded AI replies using verified knowledge and controlled live-information tools.
+- Move AI requests requiring judgment, sensitive support, or unsupported information to the human queue.
 
 The appointment list omits email and phone. The protected single-appointment endpoint returns contact details only after authorized staff open that appointment.
 
-Patients, conversations, notifications, settings, and audit-log pages remain future modules.
+Patients, notifications, settings, knowledge management, and audit-log pages remain future modules. Conversation storage, the protected staff inbox, and staff-triggered AI response storage are implemented. Live website/Messenger delivery remains later work.
+
+The lower-cost default uses `AI_PROVIDER=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL=gpt-4o-mini` in the root `.env`. For synthetic-data testing, set `AI_PROVIDER=groq`, `GROQ_API_KEY`, and optionally `GROQ_MODEL=openai/gpt-oss-20b`. Provider selection is explicit; an OpenAI failure never silently sends a conversation to Groq. Never place AI keys in a `NEXT_PUBLIC_*` variable. Automated tests mock both providers and consume no API usage.
 
 ---
 
@@ -438,6 +448,12 @@ Current controls include:
 - `Cache-Control: no-store` on API responses.
 - ADMIN/STAFF authorization on appointment operations.
 - Minimal Prisma selections to reduce accidental data exposure.
+- Server-only AI provider credentials with bounded conversation context.
+- No selected patient contact fields in AI requests; OpenAI response storage is disabled, and Groq is an explicit test-only selection.
+- Structured AI response decisions, guarded persistence, and automatic human handoff for unsupported requests.
+- Deterministic pre-provider AI guardrails for clinical advice, urgent symptoms, patient-record requests, and prompt injection; matching requests are escalated without sending patient content to an external model.
+- Allow-listed, schema-validated AI tools with bounded tool rounds and outputs; the model never receives Prisma or database access.
+- A two-step appointment tool flow: a 15-minute server-side intent followed by exact patient confirmation and privacy consent before the existing appointment business rules write a request.
 
 Still required before public real-data use:
 
@@ -447,6 +463,7 @@ Still required before public real-data use:
 - Audit logs and access review.
 - Monitoring, backups, retention, and incident procedures.
 - A production privacy and security review.
+- AI red-team cases, quality evaluations, cost alerts, and the expanded Section 26 guardrails.
 
 ---
 
@@ -698,6 +715,10 @@ rediss://
 
 **Current status:** n8n runs locally through Docker at `http://localhost:5678`.
 
+The API can publish committed appointment events to `N8N_WEBHOOK_URL`. Keep the webhook URL empty until a workflow is created and tested. Set `N8N_WEBHOOK_SECRET` to a shared secret and validate the `x-n8n-webhook-secret` header in the workflow. n8n delivery is best-effort; an n8n outage does not undo a committed appointment.
+
+For Gmail, configure OAuth directly in n8n and keep Gmail credentials out of the API environment. Use the production webhook URL only after activating the workflow. The test URL listens for one request after **Execute workflow** and then returns 404 by design. Key idempotency by the event `id`, monitor failed executions in n8n, and retry email there without changing the committed appointment.
+
 Local n8n is useful for developing workflows, but it cannot reliably receive public webhooks when the computer is off or inaccessible.
 
 Do not deploy n8n until a real workflow requires it. A deployed instance needs:
@@ -878,28 +899,28 @@ The slot may have been taken, blocked, outside clinic hours, or in conflict with
 
 ## 30. Command reference
 
-| Command | Meaning | Environment |
-| --- | --- | --- |
-| `npm install` | Install workspace dependencies | Local/build |
-| `docker compose up -d` | Start local infrastructure | Local |
-| `docker compose down` | Stop containers, keep volumes | Local |
-| `docker compose down -v` | Stop and delete local volumes | Local, destructive |
-| `npx prisma generate` | Generate Prisma client | Local/build |
-| `npx prisma validate` | Validate Prisma schema | Any safe environment |
-| `npx prisma migrate status` | Show migration state | Any correctly configured environment |
-| `npx prisma migrate dev --name NAME` | Create/apply development migration | Local only |
-| `npx prisma migrate deploy` | Apply committed migrations | Staging/production |
-| `npx prisma db seed` | Insert synthetic seed data | Local/demo only |
-| `npx prisma migrate reset` | Recreate configured database | Local, destructive |
-| `npx prisma studio` | Open local database viewer | Local |
-| `npm run start:dev -w @dental/api` | Start watched API | Local |
-| `npm run dev -w @dental/web` | Start Next.js website | Local |
-| `npm run lint` | Lint workspaces | Before commit |
-| `npm run test -w @dental/api -- --runInBand` | Run API unit tests | Before commit |
-| `npm run test:e2e -w @dental/api -- --runInBand` | Run API E2E tests | Before commit |
-| `npm run build -w @dental/api` | Build the NestJS API | Before deployment |
-| `npm run build -w @dental/web` | Build the Next.js website | Before deployment |
-| `npm audit --omit=dev` | Check production dependency advisories | Before release |
+| Command                                          | Meaning                                | Environment                          |
+| ------------------------------------------------ | -------------------------------------- | ------------------------------------ |
+| `npm install`                                    | Install workspace dependencies         | Local/build                          |
+| `docker compose up -d`                           | Start local infrastructure             | Local                                |
+| `docker compose down`                            | Stop containers, keep volumes          | Local                                |
+| `docker compose down -v`                         | Stop and delete local volumes          | Local, destructive                   |
+| `npx prisma generate`                            | Generate Prisma client                 | Local/build                          |
+| `npx prisma validate`                            | Validate Prisma schema                 | Any safe environment                 |
+| `npx prisma migrate status`                      | Show migration state                   | Any correctly configured environment |
+| `npx prisma migrate dev --name NAME`             | Create/apply development migration     | Local only                           |
+| `npx prisma migrate deploy`                      | Apply committed migrations             | Staging/production                   |
+| `npx prisma db seed`                             | Insert synthetic seed data             | Local/demo only                      |
+| `npx prisma migrate reset`                       | Recreate configured database           | Local, destructive                   |
+| `npx prisma studio`                              | Open local database viewer             | Local                                |
+| `npm run start:dev -w @dental/api`               | Start watched API                      | Local                                |
+| `npm run dev -w @dental/web`                     | Start Next.js website                  | Local                                |
+| `npm run lint`                                   | Lint workspaces                        | Before commit                        |
+| `npm run test -w @dental/api -- --runInBand`     | Run API unit tests                     | Before commit                        |
+| `npm run test:e2e -w @dental/api -- --runInBand` | Run API E2E tests                      | Before commit                        |
+| `npm run build -w @dental/api`                   | Build the NestJS API                   | Before deployment                    |
+| `npm run build -w @dental/web`                   | Build the Next.js website              | Before deployment                    |
+| `npm audit --omit=dev`                           | Check production dependency advisories | Before release                       |
 
 ---
 

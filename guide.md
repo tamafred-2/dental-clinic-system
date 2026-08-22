@@ -558,8 +558,16 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dental_clinic
 # Authentication
 SESSION_TTL_DAYS=7
 
+# AI provider
+AI_PROVIDER=openai
+
 # OpenAI
 OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+
+# Optional Groq test provider
+GROQ_API_KEY=
+GROQ_MODEL=openai/gpt-oss-20b
 
 # Gmail
 GOOGLE_CLIENT_ID=
@@ -1550,6 +1558,37 @@ SYSTEM
 
 ```
 
+### Current implementation status
+
+Section 22 is implemented as a channel-independent, staff-only conversation inbox:
+
+- `Conversation` stores WEBSITE and FACEBOOK_MESSENGER records through the same model and API.
+- A composite channel/reference identity prevents the same external thread from being imported twice when channel integrations are added.
+- `Message` stores PATIENT, AI, STAFF, and SYSTEM history independently of transport-specific payloads.
+- Staff-authored messages record the authenticated staff user, while patient, AI, and system messages can remain unassigned to a user account.
+- ADMIN and STAFF can filter conversations by channel, lifecycle status, and assignment, with bounded pagination.
+- Conversation list responses include only patient identity; email, phone, and message content load only through protected detail/history requests.
+- Message history is paginated and intentionally omits raw integration metadata.
+- Staff can claim, release, and close conversations. Optimistic updates reject concurrent assignment changes instead of overwriting another staff member.
+- Only the currently assigned staff member can add a STAFF message. Administrators can release or close another assignment but cannot impersonate its author.
+- Closed conversations cannot be claimed, released, or given new messages.
+- `/admin/conversations` provides the shared staff inbox for both channels.
+- The seed defines 12 synthetic cross-channel examples, but it is not automatically rerun because reseeding resets the synthetic development database.
+
+Implemented endpoints:
+
+```text
+GET  /api/conversations/admin
+GET  /api/conversations/admin/:id
+GET  /api/conversations/admin/:id/messages
+POST /api/conversations/admin/:id/claim
+POST /api/conversations/admin/:id/release
+POST /api/conversations/admin/:id/close
+POST /api/conversations/admin/:id/messages
+```
+
+Section 22 stores and manages the history only. Public website chat delivery, AI-generated replies, Messenger webhooks, and outbound channel delivery remain later sections and must not be represented as active yet.
+
 ---
 
 # 23. AI Administrative Assistant
@@ -1571,7 +1610,7 @@ NestJS AI Service
      +---- Available Tools
      |
      v
- OpenAI API
+Configured AI Provider
      |
      v
 AI Response
@@ -1595,6 +1634,55 @@ The AI can:
 - Check appointment availability
 - Start appointment workflows
 - Escalate conversations to staff
+
+## Implemented Section 23 foundation
+
+Section 23 is implemented as a bounded, server-side AI response workflow:
+
+- `AiModule` owns the AI controller, application service, and explicitly selected OpenAI or Groq provider. The browser never receives either API key.
+- `POST /api/conversations/admin/:id/ai-response` is restricted to authenticated ADMIN and STAFF users and limited to five requests per minute.
+- Both providers use an OpenAI-compatible Responses API with Structured Outputs so every result is either `RESPOND` or `ESCALATE`.
+- Only the eight most recent conversational messages are considered, each message is capped at 1,200 characters, and output is limited to 350 tokens. Patient names, email addresses, phone numbers, and appointment records are not included.
+- OpenAI response storage is disabled with `store: false`, and a one-way conversation hash is supplied as the privacy-preserving safety identifier.
+- AI output and the decision are stored in a serializable Prisma transaction. If the conversation changes during generation, the stale response is rejected.
+- Missing configuration or provider failure returns `503` and stores nothing.
+- An escalation stores a neutral system handoff message and moves the conversation to `HUMAN_REQUIRED` without assigning it to an arbitrary staff member.
+- The staff inbox displays **AI reply** only when an `AI_ACTIVE` conversation has an unanswered patient message.
+
+Configure the server in the root `.env`:
+
+```env
+AI_PROVIDER=openai
+OPENAI_API_KEY=your-server-side-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+`gpt-4o-mini` is the lower-cost normal default. OpenAI API usage still requires API billing; a ChatGPT subscription does not supply API credits.
+
+For free-tier testing with synthetic conversations, create a Groq API key and switch the server explicitly:
+
+```env
+AI_PROVIDER=groq
+GROQ_API_KEY=your-server-side-key
+GROQ_MODEL=openai/gpt-oss-20b
+```
+
+Groq's free plan is rate-limited and can change, so it is useful for development rather than a production availability guarantee. The previously common Groq Llama 3 model IDs were deprecated in August 2026, which is why the test default uses the currently supported `openai/gpt-oss-20b`. Provider selection is intentional: the application does not silently send a failed OpenAI request to Groq. Before processing real patient content with either provider, complete the clinic's privacy review and configure the provider's data controls.
+
+At this stage, the AI intentionally answers only simple, non-factual conversational messages. Requests involving clinic facts, prices, policies, availability, workflows, medical judgment, urgency, or patient records are handed to staff. Sections 24 and 25 will add verified clinic knowledge and application tools; Section 26 will expand safety evaluation. Live website and Messenger delivery remain later work.
+
+The implementation follows the official [OpenAI Responses API](https://developers.openai.com/api/docs/guides/responses) and [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) guidance. The optional test provider uses Groq's [OpenAI compatibility](https://console.groq.com/docs/openai), [free-plan limits](https://console.groq.com/docs/rate-limits), and [data controls](https://console.groq.com/docs/your-data).
+
+### Verify Section 23
+
+```powershell
+npm run test -w @dental/api -- --runInBand
+npm run test:e2e -w @dental/api -- --runInBand
+npm run build -w @dental/api
+npm run build -w @dental/web
+```
+
+For a live test, start the API and website, open `/admin/conversations`, select an `AI_ACTIVE` conversation whose latest message is from the patient, and select **AI reply**. A live OpenAI test incurs API usage; a Groq free-plan test consumes its rate-limited allowance. Automated tests mock both providers and make no external AI requests.
 
 ---
 
@@ -1668,6 +1756,73 @@ It should not guess.
 
 ---
 
+## Implemented Section 24 foundation
+
+Section 24 is implemented as a small, clinic-owned retrieval system:
+
+- `KnowledgeDocument` stores normalized public clinic, service, FAQ, and dentist records. Patient records and private conversations are never indexed.
+- `KnowledgeChunk` stores bounded chunks and their embedding arrays in PostgreSQL. Similarity is calculated in the API, avoiding a separate vector database for the current clinic-sized dataset.
+- The default `local-hash-v3` hybrid embedding provider is deterministic, free, and suitable for local testing. It combines hashed vectors with lexical relevance. `text-embedding-3-small` can be selected for stronger semantic retrieval by setting `KNOWLEDGE_EMBEDDING_PROVIDER=openai` and rebuilding the index.
+- `POST /api/knowledge/admin/reindex` is ADMIN-only, rate-limited, computes the complete replacement before changing the current index, and replaces the index in one serializable transaction.
+- `GET /api/knowledge/admin/status` and `POST /api/knowledge/admin/search` are protected diagnostic endpoints for ADMIN and STAFF.
+- Before generating a response, `AiService` retrieves at most four relevant records for the latest patient message. Retrieved content is passed as bounded data, not as trusted instructions.
+- AI metadata records only source keys that were actually retrieved. A grounded response with missing or invented source keys is handed to staff instead of being accepted.
+- If retrieval fails or no reliable clinic information is found, the model receives no clinic facts and must escalate factual questions. Greetings can still be answered without a knowledge source.
+
+The seed creates a local knowledge index automatically. After changing clinic information, services, FAQs, dentists, or the embedding provider, rebuild the index deliberately.
+
+### Apply and verify Section 24
+
+From the repository root:
+
+```powershell
+npx prisma migrate dev
+npx prisma db seed
+npm run test -w @dental/api -- --runInBand
+npm run lint -w @dental/api
+npm run build -w @dental/api
+```
+
+With the API running and an authenticated `$clinicSession` created by the login commands from Section 13:
+
+```powershell
+$status = Invoke-RestMethod `
+  -Uri "http://localhost:4000/api/knowledge/admin/status" `
+  -WebSession $clinicSession
+
+if ($status.ready) {
+  Write-Host "SUCCESS: Knowledge index is ready" -ForegroundColor Green
+} else {
+  Write-Host "FAILED: Knowledge index is empty" -ForegroundColor Red
+}
+
+$results = Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:4000/api/knowledge/admin/search" `
+  -ContentType "application/json" `
+  -Body (@{ query = "Where is the clinic located?" } | ConvertTo-Json) `
+  -WebSession $clinicSession
+
+if ($results.Count -gt 0) {
+  Write-Host "SUCCESS: Verified clinic knowledge was retrieved" -ForegroundColor Green
+} else {
+  Write-Host "FAILED: No relevant clinic knowledge was retrieved" -ForegroundColor Red
+}
+```
+
+To rebuild manually as an administrator:
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:4000/api/knowledge/admin/reindex" `
+  -WebSession $clinicSession
+```
+
+The implementation follows the official [OpenAI embeddings guide](https://developers.openai.com/api/docs/guides/embeddings) and [retrieval guidance](https://developers.openai.com/api/docs/guides/retrieval). The application retains its own PostgreSQL index so local development and the optional Groq generation provider do not require OpenAI-hosted vector storage.
+
+---
+
 # 25. AI Tool Calling
 
 The AI can use controlled backend tools.
@@ -1681,6 +1836,7 @@ getDentists
 getOpeningHours
 getFAQs
 checkAvailability
+prepareAppointmentRequest
 createAppointmentRequest
 requestHumanHandoff
 
@@ -1735,6 +1891,45 @@ Business Logic
 Database
 
 ```
+
+## Current implementation
+
+Section 25 is implemented as a controlled, server-side tool loop. The model can request an allow-listed tool, but it never receives database credentials, Prisma access, patient contact fields, or arbitrary code execution.
+
+- Read tools return only public clinic, dentist, service, FAQ, and opening-hours information.
+- `checkAvailability` calls the existing availability service, so timezone, clinic hours, blocked dates, dentist schedules, and already-booked slots remain the source of truth.
+- Tool arguments are schema-validated. Unknown tools, malformed arguments, and tool failures produce a safe result rather than a database operation.
+- A maximum of five calls across three tool rounds prevents a looping or unexpectedly expensive request.
+- Tool outputs are bounded before they are returned to the AI provider, and stored conversation metadata records only tool names and outcome codes—not tool arguments or patient contact details.
+- OpenAI uses strict structured decisions with tools. Groq's API does not support strict structured output and tool use in the same request, so the Groq provider uses the same controlled tool loop with a plain-language final response; the backend still validates every tool and applies its existing grounding and handoff rules.
+
+### Safe appointment request flow
+
+Appointment creation is intentionally two-step:
+
+```text
+AI → prepareAppointmentRequest → AvailabilityService
+                                      |
+                                      v
+                         short-lived AppointmentIntent (15 minutes)
+                                      |
+                      patient sends exact confirmation + privacy consent
+                                      |
+                                      v
+AI → createAppointmentRequest → AppointmentsService → PostgreSQL
+```
+
+`prepareAppointmentRequest` does not create an appointment. It validates the exact slot first and returns this required patient message:
+
+```text
+I confirm this appointment request and agree to the privacy policy.
+```
+
+Only when that exact latest patient message is present can `createAppointmentRequest` use the server-owned patient record and existing appointment business rules to create a pending request. The intent is single-use, expires after 15 minutes, and its linked appointment ID makes safe retries idempotent.
+
+`requestHumanHandoff` forces the conversation into the staff queue even if the model subsequently attempts a normal reply.
+
+The implementation follows the official [OpenAI function-calling flow](https://developers.openai.com/api/docs/guides/function-calling): the application executes each approved call and submits its result back to the model for the final patient response.
 
 ---
 
@@ -1805,6 +2000,12 @@ The AI should also recognize potentially urgent situations and avoid pretending 
 
 Emergency handling should be designed and reviewed by the clinic before production deployment.
 
+## Implemented Section 26 guardrails
+
+The API now applies a deterministic safety assessment before knowledge retrieval is sent to an AI provider. It escalates messages containing clinical diagnosis, treatment or medication requests, urgent symptoms, patient-record requests, or common prompt-injection attempts. These messages are not sent to Groq or OpenAI and are stored as a neutral system handoff with an auditable guardrail reason.
+
+Normal administrative questions continue through the existing KnowledgeService retrieval, provider, validation, and persistence flow. Emergency wording is intentionally conservative: the current response hands the conversation to clinic staff and does not provide emergency medical instructions. The clinic must approve the final emergency message and local emergency-contact process before real-patient deployment.
+
 ---
 
 # 27. n8n Automation
@@ -1867,6 +2068,21 @@ NestJS should decide whether the appointment is valid.
 
 n8n should decide what external actions happen afterward.
 
+## Implemented Section 27 foundation
+
+NestJS now publishes an `appointment.created` event after an appointment transaction commits successfully. The event is sent only when `N8N_WEBHOOK_URL` is configured; a missing URL skips delivery, and a timeout or non-2xx response is logged without rolling back or failing the appointment request.
+
+Configure the API with:
+
+```env
+N8N_WEBHOOK_URL=http://localhost:5678/webhook/dental-appointments
+N8N_WEBHOOK_SECRET=shared-secret-for-the-workflow
+```
+
+The webhook receives a JSON event with an idempotency-friendly `id`, `type`, appointment status and schedule, public dentist/service details, and the patient contact fields required for an external confirmation workflow. The API sends `x-event-id` and, when configured, `x-n8n-webhook-secret` headers. n8n must treat the event as an external-action trigger only; appointment validation and database writes remain in NestJS.
+
+The publisher is best-effort and bounded to five seconds. Configure retries and downstream email/reminder behavior in n8n, and make those workflows idempotent by `event.id`.
+
 ---
 
 # 28. Gmail Integration
@@ -1919,6 +2135,28 @@ Cancellation/rescheduling instructions
 ```
 
 Do not include unnecessary sensitive information.
+
+## Implemented Section 28 foundation
+
+Gmail delivery belongs in the n8n workflow. NestJS publishes the committed `appointment.created` event; n8n validates the `x-n8n-webhook-secret` header, formats the appointment in the clinic timezone, and sends the email through a Gmail node. The API does not need Gmail OAuth credentials.
+
+Create the workflow in this order:
+
+```text
+Webhook (POST /dental-appointments)
+  -> Header/secret validation
+  -> Optional idempotency check using {{$json.body.id}}
+  -> Gmail: patient confirmation
+  -> Gmail: staff notification (optional separate branch)
+```
+
+Use the test URL only while the workflow editor is listening. After testing, activate the workflow and change the API's `N8N_WEBHOOK_URL` to the production webhook URL. A test webhook intentionally stops listening after one request, which is why later calls return 404 until **Execute workflow** is pressed again.
+
+For the Gmail node, the patient recipient is `{{$json.body.appointment.patient.email}}`. Include the patient's name, dentist, service, date/time converted using `{{$json.body.appointment.clinic.timeZone}}`, clinic name/address/phone, and the cancellation and appointment policies. Keep the email administrative and do not include diagnoses, treatment details, or unrelated patient data.
+
+Configure Gmail OAuth directly in n8n's Credentials panel. Do not put the OAuth token or Gmail password in `.env`, the browser, or the webhook payload. For production, add an idempotency store in n8n keyed by `{{$json.body.id}}` before the Gmail node so retries cannot send duplicate confirmations.
+
+The API's notification publisher is best-effort: missing n8n configuration, an n8n timeout, or a Gmail workflow failure is logged and never rolls back an already-committed appointment. Staff should monitor n8n execution history and retry failed emails there.
 
 ---
 
@@ -2631,14 +2869,14 @@ The simplest free demonstration deployment is:
 
 The services have different responsibilities:
 
-| Component | Recommended free provider | Purpose | Important free-plan limitation |
-| --- | --- | --- | --- |
-| Next.js website | Vercel Hobby | Public website | Intended for personal/non-commercial use; review the plan before using it for a paying clinic |
-| NestJS API | Render Free web service | Backend API | Spins down after inactivity and can have a noticeable cold start; not intended for production |
-| PostgreSQL | Neon Free | Permanent system of record | Limited storage and compute; use a paid plan and verified backups for a real clinic |
-| Redis-compatible cache | Upstash Redis Free | Cache and shared rate-limit state | Command, storage, and bandwidth limits; free tier has no production SLA |
-| Form abuse check | Cloudflare Turnstile Free | Appointment anti-bot challenge | The server must verify every token; it is not a replacement for rate limiting |
-| n8n | Local Docker initially | Automation development | A local computer cannot reliably receive public production webhooks |
+| Component              | Recommended free provider | Purpose                           | Important free-plan limitation                                                                |
+| ---------------------- | ------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- |
+| Next.js website        | Vercel Hobby              | Public website                    | Intended for personal/non-commercial use; review the plan before using it for a paying clinic |
+| NestJS API             | Render Free web service   | Backend API                       | Spins down after inactivity and can have a noticeable cold start; not intended for production |
+| PostgreSQL             | Neon Free                 | Permanent system of record        | Limited storage and compute; use a paid plan and verified backups for a real clinic           |
+| Redis-compatible cache | Upstash Redis Free        | Cache and shared rate-limit state | Command, storage, and bandwidth limits; free tier has no production SLA                       |
+| Form abuse check       | Cloudflare Turnstile Free | Appointment anti-bot challenge    | The server must verify every token; it is not a replacement for rate limiting                 |
+| n8n                    | Local Docker initially    | Automation development            | A local computer cannot reliably receive public production webhooks                           |
 
 Provider plans and limits change. Recheck the official [Vercel Hobby](https://vercel.com/docs/plans/hobby), [Render Free](https://render.com/docs/free), [Neon pricing](https://neon.com/pricing), [Upstash Redis pricing](https://upstash.com/pricing/redis), and [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) pages before deployment. The values in this guide were verified on August 15, 2026.
 
@@ -2690,13 +2928,13 @@ The API bootstrap is deployment-ready: it prefers Render's injected `PORT`, fall
 
 ```typescript
 const configuredPort =
-  configService.get<string>('PORT') ??
-  configService.get<string>('API_PORT') ??
-  '4000';
+  configService.get<string>("PORT") ??
+  configService.get<string>("API_PORT") ??
+  "4000";
 const port = Number(configuredPort);
 const host =
-  configService.get<string>('API_HOST') ??
-  (isProduction ? '0.0.0.0' : '127.0.0.1');
+  configService.get<string>("API_HOST") ??
+  (isProduction ? "0.0.0.0" : "127.0.0.1");
 
 await app.listen(port, host);
 ```
@@ -2814,11 +3052,11 @@ The current system is safe without hosted Redis because PostgreSQL is the source
 
 ### Verified Redis hosting choices
 
-| Provider | Free allowance verified August 15, 2026 | Suitable use here | Decision |
-| --- | --- | --- | --- |
-| Upstash Redis Free | 256 MB, 500,000 commands/month, 10 GB monthly bandwidth | Demo cache and shared rate limits; TLS endpoint; Singapore region available | Recommended free option |
-| Render Free Key Value | Redis-compatible/Valkey service, but free data is in-memory and can be lost on restart | Disposable cache only | Do not use for durable queues or important state |
-| Redis Cloud Free | 30 MB and one free database; free backup/export is unavailable | Learning or a very small cache | Valid alternative, but smaller than Upstash Free |
+| Provider              | Free allowance verified August 15, 2026                                                | Suitable use here                                                           | Decision                                         |
+| --------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| Upstash Redis Free    | 256 MB, 500,000 commands/month, 10 GB monthly bandwidth                                | Demo cache and shared rate limits; TLS endpoint; Singapore region available | Recommended free option                          |
+| Render Free Key Value | Redis-compatible/Valkey service, but free data is in-memory and can be lost on restart | Disposable cache only                                                       | Do not use for durable queues or important state |
+| Redis Cloud Free      | 30 MB and one free database; free backup/export is unavailable                         | Learning or a very small cache                                              | Valid alternative, but smaller than Upstash Free |
 
 Official references: [Upstash Redis pricing](https://upstash.com/pricing/redis), [Upstash regions and global databases](https://upstash.com/docs/redis/features/globaldatabase), [Render Key Value](https://render.com/docs/key-value), [Render free limitations](https://render.com/docs/free), [Redis Cloud free database](https://redis.io/docs/latest/operate/rc/databases/create-database/create-free-database/), and [Redis Cloud backups](https://redis.io/docs/latest/operate/rc/databases/back-up-data/).
 
@@ -2864,12 +3102,12 @@ Read Redis key
 
 Suggested starting keys and TTLs:
 
-| Key | Suggested TTL | Invalidate when |
-| --- | ---: | --- |
-| `clinic:public:v1` | 300 seconds | Clinic information or policies change |
-| `services:public:v1` | 300 seconds | A service is created, updated, reordered, activated, or disabled |
-| `dentists:public:v1` | 300 seconds | A dentist is created, updated, reordered, activated, or disabled |
-| `faqs:public:v1` | 600 seconds | An FAQ is created, updated, reordered, activated, or disabled |
+| Key                  | Suggested TTL | Invalidate when                                                  |
+| -------------------- | ------------: | ---------------------------------------------------------------- |
+| `clinic:public:v1`   |   300 seconds | Clinic information or policies change                            |
+| `services:public:v1` |   300 seconds | A service is created, updated, reordered, activated, or disabled |
+| `dentists:public:v1` |   300 seconds | A dentist is created, updated, reordered, activated, or disabled |
+| `faqs:public:v1`     |   600 seconds | An FAQ is created, updated, reordered, activated, or disabled    |
 
 The API should delete the relevant cache key only after a successful database update. A later read repopulates it. Version suffixes such as `v1` allow a safe cache format change.
 
