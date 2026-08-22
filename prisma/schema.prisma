@@ -31,6 +31,13 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum AppointmentIntentStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
 enum ConversationStatus {
   AI_ACTIVE
   HUMAN_REQUIRED
@@ -48,6 +55,13 @@ enum MessageSenderType {
   AI
   STAFF
   SYSTEM
+}
+
+enum KnowledgeSourceType {
+  CLINIC
+  SERVICE
+  FAQ
+  DENTIST
 }
 
 model Clinic {
@@ -100,6 +114,7 @@ model User {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   assignedConversations Conversation[] @relation("AssignedStaff")
+  sentMessages          Message[]      @relation("MessageSenderUser")
   sessions              Session[]
 }
 
@@ -116,29 +131,31 @@ model Patient {
 }
 
 model Dentist {
-  id              String        @id @default(cuid())
-  name            String
-  title           String
-  bio             String
-  specializations String[]
-  photoUrl        String?
-  active          Boolean       @default(true)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  schedules       Schedule[]
-  appointments    Appointment[]
+  id                 String              @id @default(cuid())
+  name               String
+  title              String
+  bio                String
+  specializations    String[]
+  photoUrl           String?
+  active             Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  schedules          Schedule[]
+  appointments       Appointment[]
+  appointmentIntents AppointmentIntent[]
 }
 
 model Service {
-  id              String        @id @default(cuid())
-  name            String        @unique
-  description     String
-  durationMinutes Int
-  active          Boolean       @default(true)
-  displayOrder    Int           @unique
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  appointments    Appointment[]
+  id                 String              @id @default(cuid())
+  name               String              @unique
+  description        String
+  durationMinutes    Int
+  active             Boolean             @default(true)
+  displayOrder       Int                 @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  appointments       Appointment[]
+  appointmentIntents AppointmentIntent[]
 }
 
 model Faq {
@@ -163,21 +180,23 @@ model Schedule {
 }
 
 model Appointment {
-  id                 String            @id @default(cuid())
-  patientId          String
-  dentistId          String
-  serviceId          String
-  scheduledAt        DateTime
-  endAt              DateTime
-  status             AppointmentStatus @default(PENDING)
-  privacyConsentAt   DateTime?
-  notes              String?
-  cancellationReason String?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  patient            Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  dentist            Dentist           @relation(fields: [dentistId], references: [id], onDelete: Restrict)
-  service            Service           @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  id                  String             @id @default(cuid())
+  patientId           String
+  dentistId           String
+  serviceId           String
+  scheduledAt         DateTime
+  endAt               DateTime
+  status              AppointmentStatus  @default(PENDING)
+  privacyConsentAt    DateTime?
+  notes               String?
+  cancellationReason  String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  appointmentIntentId String?            @unique
+  patient             Patient            @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  dentist             Dentist            @relation(fields: [dentistId], references: [id], onDelete: Restrict)
+  service             Service            @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  appointmentIntent   AppointmentIntent? @relation(fields: [appointmentIntentId], references: [id], onDelete: SetNull)
 
   @@unique([dentistId, scheduledAt])
   @@index([patientId, scheduledAt])
@@ -185,32 +204,88 @@ model Appointment {
 }
 
 model Conversation {
-  id               String              @id @default(cuid())
-  patientId        String
-  channel          ConversationChannel
-  channelReference String?
-  status           ConversationStatus  @default(AI_ACTIVE)
-  assignedStaffId  String?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  patient          Patient             @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  assignedStaff    User?               @relation("AssignedStaff", fields: [assignedStaffId], references: [id], onDelete: SetNull)
-  messages         Message[]
+  id                 String              @id @default(cuid())
+  patientId          String
+  channel            ConversationChannel
+  channelReference   String?
+  status             ConversationStatus  @default(AI_ACTIVE)
+  assignedStaffId    String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  patient            Patient             @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  assignedStaff      User?               @relation("AssignedStaff", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  messages           Message[]
+  appointmentIntents AppointmentIntent[]
 
+  @@unique([channel, channelReference])
   @@index([patientId, updatedAt])
   @@index([status, updatedAt])
+  @@index([assignedStaffId, status, updatedAt])
+}
+
+model AppointmentIntent {
+  id             String                  @id @default(cuid())
+  conversationId String
+  dentistId      String
+  serviceId      String
+  scheduledAt    DateTime
+  status         AppointmentIntentStatus @default(PENDING)
+  expiresAt      DateTime
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  conversation   Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  dentist        Dentist                 @relation(fields: [dentistId], references: [id], onDelete: Restrict)
+  service        Service                 @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  appointment    Appointment?
+
+  @@index([conversationId, status, expiresAt])
+  @@index([expiresAt, status])
 }
 
 model Message {
   id             String            @id @default(cuid())
   conversationId String
+  senderUserId   String?
   senderType     MessageSenderType
   content        String
   metadata       Json?
   createdAt      DateTime          @default(now())
   conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUser     User?             @relation("MessageSenderUser", fields: [senderUserId], references: [id], onDelete: SetNull)
 
   @@index([conversationId, createdAt])
+  @@index([senderUserId, createdAt])
+}
+
+model KnowledgeDocument {
+  id         String              @id @default(cuid())
+  key        String              @unique
+  sourceType KnowledgeSourceType
+  sourceId   String
+  title      String
+  content    String
+  published  Boolean             @default(true)
+  checksum   String
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  chunks     KnowledgeChunk[]
+
+  @@index([published, sourceType])
+}
+
+model KnowledgeChunk {
+  id             String            @id @default(cuid())
+  documentId     String
+  chunkIndex     Int
+  content        String
+  embedding      Float[]
+  embeddingModel String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  document       KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([embeddingModel])
 }
 
 model Session {
