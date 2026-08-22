@@ -1,7 +1,13 @@
 import "dotenv/config";
 import * as argon2 from "argon2";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { LOCAL_EMBEDDING_MODEL } from "../apps/api/src/knowledge/knowledge.constants";
+import {
+  buildKnowledgeDocuments,
+  chunkKnowledgeContent,
+} from "../apps/api/src/knowledge/knowledge-source";
+import { createLocalEmbedding } from "../apps/api/src/knowledge/local-embedding";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -152,11 +158,35 @@ const weekdays = [
   "FRIDAY",
 ] as const;
 
+const conversationPrompts = [
+  "What time does the clinic open on weekdays?",
+  "Can I request a dental cleaning next week?",
+  "Do you provide dental care for children?",
+  "I need help rescheduling my appointment.",
+  "How long does a dental consultation take?",
+  "Do you offer clear aligner consultations?",
+  "What should I bring to my first visit?",
+  "Can I choose a specific dentist?",
+  "How early should I arrive for an appointment?",
+  "I would like information about teeth whitening.",
+  "What should I do about urgent dental pain?",
+  "Where is the clinic located?",
+] as const;
+
+const conversationStatuses = [
+  "AI_ACTIVE",
+  "HUMAN_REQUIRED",
+  "HUMAN_ACTIVE",
+  "CLOSED",
+] as const;
+
 async function main() {
   // Development-only reset: these records are all generated fake data.
+  await prisma.knowledgeDocument.deleteMany();
   await prisma.message.deleteMany();
-  await prisma.conversation.deleteMany();
   await prisma.appointment.deleteMany();
+  await prisma.appointmentIntent.deleteMany();
+  await prisma.conversation.deleteMany();
   await prisma.schedule.deleteMany();
   await prisma.blockedDate.deleteMany();
   await prisma.clinicHour.deleteMany();
@@ -200,7 +230,7 @@ async function main() {
     parallelism: 1,
   });
 
-  await prisma.user.create({
+  const admin = await prisma.user.create({
     data: {
       name: "Development Admin",
       email: "admin@brightsmile.test",
@@ -239,6 +269,77 @@ async function main() {
     })),
   });
 
+  const [
+    knowledgeClinics,
+    knowledgeServices,
+    knowledgeFaqs,
+    knowledgeDentists,
+  ] = await Promise.all([
+    prisma.clinic.findMany({
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        phone: true,
+        email: true,
+        timeZone: true,
+        openingHours: true,
+        appointmentPolicy: true,
+        cancellationPolicy: true,
+        hours: {
+          orderBy: { day: "asc" },
+          select: { day: true, startTime: true, endTime: true },
+        },
+      },
+    }),
+    prisma.service.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        durationMinutes: true,
+      },
+    }),
+    prisma.faq.findMany({
+      where: { published: true },
+      select: { id: true, question: true, answer: true },
+    }),
+    prisma.dentist.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        name: true,
+        title: true,
+        bio: true,
+        specializations: true,
+      },
+    }),
+  ]);
+  const knowledgeDocuments = buildKnowledgeDocuments({
+    clinics: knowledgeClinics,
+    services: knowledgeServices,
+    faqs: knowledgeFaqs,
+    dentists: knowledgeDentists,
+  });
+
+  for (const knowledgeDocument of knowledgeDocuments) {
+    const chunks = chunkKnowledgeContent(knowledgeDocument.content);
+    await prisma.knowledgeDocument.create({
+      data: {
+        ...knowledgeDocument,
+        chunks: {
+          create: chunks.map((content, chunkIndex) => ({
+            chunkIndex,
+            content,
+            embedding: createLocalEmbedding(content),
+            embeddingModel: LOCAL_EMBEDDING_MODEL,
+          })),
+        },
+      },
+    });
+  }
+
   await prisma.patient.createMany({
     data: Array.from({ length: 30 }, (_, index) => {
       const firstName = firstNames[index % firstNames.length];
@@ -254,6 +355,12 @@ async function main() {
     }),
   });
 
+  const createdPatients = await prisma.patient.findMany({
+    orderBy: { email: "asc" },
+    take: conversationPrompts.length,
+    select: { id: true },
+  });
+
   await prisma.schedule.createMany({
     data: createdDentists.flatMap((dentist) =>
       weekdays.map((day) => ({
@@ -265,8 +372,77 @@ async function main() {
     ),
   });
 
+  for (const [index, prompt] of conversationPrompts.entries()) {
+    const channel = index % 3 === 0 ? "FACEBOOK_MESSENGER" : "WEBSITE";
+    const status = conversationStatuses[index % conversationStatuses.length];
+    const startedAt = new Date(Date.now() - (index + 1) * 45 * 60_000);
+    const conversation = await prisma.conversation.create({
+      data: {
+        patientId: createdPatients[index].id,
+        channel,
+        channelReference: `synthetic-${channel.toLowerCase()}-${String(index + 1).padStart(2, "0")}`,
+        status,
+        assignedStaffId: status === "HUMAN_ACTIVE" ? admin.id : null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      },
+    });
+
+    const messages: Prisma.MessageCreateManyInput[] = [
+      {
+        conversationId: conversation.id,
+        senderType: "PATIENT",
+        content: prompt,
+        metadata: { synthetic: true, channel },
+        createdAt: startedAt,
+      },
+    ];
+
+    // AI-active examples deliberately end with a patient message so the
+    // protected dashboard "AI reply" action is available for local testing.
+    if (status !== "AI_ACTIVE") {
+      messages.push({
+        conversationId: conversation.id,
+        senderType: "AI",
+        content:
+          "This is synthetic conversation history for demonstrating channel-independent storage.",
+        metadata: { synthetic: true },
+        createdAt: new Date(startedAt.getTime() + 60_000),
+      });
+    }
+
+    if (status === "HUMAN_REQUIRED") {
+      messages.push({
+        conversationId: conversation.id,
+        senderType: "SYSTEM",
+        content: "The conversation was queued for human assistance.",
+        metadata: { synthetic: true },
+        createdAt: new Date(startedAt.getTime() + 120_000),
+      });
+    }
+    if (status === "HUMAN_ACTIVE" || status === "CLOSED") {
+      messages.push({
+        conversationId: conversation.id,
+        senderUserId: admin.id,
+        senderType: "STAFF",
+        content:
+          status === "CLOSED"
+            ? "This synthetic conversation has been resolved and closed."
+            : "A staff member is reviewing this synthetic conversation.",
+        metadata: { synthetic: true },
+        createdAt: new Date(startedAt.getTime() + 120_000),
+      });
+    }
+
+    await prisma.message.createMany({ data: messages });
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: messages.at(-1)!.createdAt },
+    });
+  }
+
   console.log(
-    "Seeded 1 clinic, 1 admin, 10 dentists, 12 services, 15 FAQs, 30 patients, and 50 schedules.",
+    `Seeded 1 clinic, 1 admin, 10 dentists, 12 services, 15 FAQs, ${knowledgeDocuments.length} knowledge documents, 30 patients, 50 schedules, 12 conversations, and synthetic messages.`,
   );
 }
 

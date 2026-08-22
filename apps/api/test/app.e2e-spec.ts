@@ -61,6 +61,41 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('protects conversation records and messages without a session', async () => {
+    await request(app.getHttpServer())
+      .get('/api/conversations/admin')
+      .expect(401);
+    await request(app.getHttpServer())
+      .get('/api/conversations/admin/conversation-1')
+      .expect(401);
+    await request(app.getHttpServer())
+      .get('/api/conversations/admin/conversation-1/messages')
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/conversations/admin/conversation-1/claim')
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/conversations/admin/conversation-1/messages')
+      .send({ content: 'This must not be stored.' })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/conversations/admin/conversation-1/ai-response')
+      .expect(401);
+  });
+
+  it('protects the clinic knowledge index without a session', async () => {
+    await request(app.getHttpServer())
+      .get('/api/knowledge/admin/status')
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/knowledge/admin/search')
+      .send({ query: 'opening hours' })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/knowledge/admin/reindex')
+      .expect(401);
+  });
+
   it('rejects protected clinic data without a session', async () => {
     await request(app.getHttpServer()).get('/api/blocked-dates').expect(401);
     await request(app.getHttpServer()).get('/api/auth/me').expect(401);
