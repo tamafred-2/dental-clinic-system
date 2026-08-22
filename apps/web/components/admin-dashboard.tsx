@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AdminSidebar } from "./admin-sidebar";
 import { ThemeToggle } from "./theme-toggle";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -387,33 +387,7 @@ export function AdminDashboard() {
 
   return (
     <div className="admin-app">
-      <aside className="admin-sidebar">
-        <Link className="admin-brand" href="/admin">
-          <span className="brand-symbol" aria-hidden="true">
-            DC
-          </span>
-          <span>
-            <strong>Dental Clinic</strong>
-            <small>Staff workspace</small>
-          </span>
-        </Link>
-        <nav aria-label="Dashboard navigation">
-          <a className="active" href="#overview">
-            Overview
-          </a>
-          <a href="#appointments">Appointments</a>
-          <a href="#calendar">Calendar</a>
-        </nav>
-        <div className="admin-sidebar-future">
-          <span>Later modules</span>
-          <p>
-            Patients, conversations, notifications, settings, and audit logs
-          </p>
-        </div>
-        <Link className="admin-site-link" href="/">
-          View public website
-        </Link>
-      </aside>
+      <AdminSidebar active="dashboard" />
 
       <main className="admin-main">
         <header className="admin-topbar">
