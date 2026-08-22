@@ -1,4 +1,5 @@
 # Dental Clinic Website + AI Automation System
+
 ![Next.js](https://img.shields.io/badge/Next.js-16.x-000000?logo=next.js&logoColor=white)
 ![React](https://img.shields.io/badge/React-19.x-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
@@ -12,9 +13,7 @@ A full-stack dental clinic website and automation platform combining
 appointment management, AI administrative assistance, Facebook Messenger,
 Gmail notifications, and a staff dashboard.
 
-> **Architecture:** Modular Monolith + Headless API + Automation Layer  
-
-
+> **Architecture:** Modular Monolith + Headless API + Automation Layer
 
 ---
 
@@ -22,25 +21,25 @@ Gmail notifications, and a staff dashboard.
 
 This project provides a centralized system for a dental clinic where patients can:
 
-* View clinic information
-* View dental services
-* View dentist information
-* Check clinic hours and location
-* Read frequently asked questions
-* Request appointments
-* Ask general administrative questions through AI
-* Communicate through Facebook Messenger
-* Receive appointment notifications
+- View clinic information
+- View dental services
+- View dentist information
+- Check clinic hours and location
+- Read frequently asked questions
+- Request appointments
+- Ask general administrative questions through AI
+- Communicate through Facebook Messenger
+- Receive appointment notifications
 
 Clinic staff can:
 
-* Manage appointments
-* Manage schedules
-* Manage dentists
-* Manage services
-* View conversations
-* Take over AI conversations
-* Receive automated notifications
+- Manage appointments
+- Manage schedules
+- Manage dentists
+- Manage services
+- View conversations
+- Take over AI conversations
+- Receive automated notifications
 
 ---
 
@@ -48,39 +47,41 @@ Clinic staff can:
 
 ### Patient Website
 
-* Responsive homepage
-* Dental services
-* Dentist information
-* Clinic information
-* Clinic hours
-* Location/contact information
-* FAQ
-* Appointment request form
-* AI chat assistant
+- Responsive homepage
+- Dental services
+- Dentist information
+- Clinic information
+- Clinic hours
+- Location/contact information
+- FAQ
+- Appointment request form
+- AI chat assistant
 
 ### Appointment Management
 
-* Appointment requests
-* Dentist assignment
-* Service selection
-* Schedule management
-* Availability checking
-* Appointment status
-* Cancellation
-* Rescheduling
-* Appointment history
+- Appointment requests
+- Dentist assignment
+- Service selection
+- Schedule management
+- Availability checking
+- Appointment status
+- Cancellation
+- Rescheduling
+- Appointment history
 
 ### AI Administrative Assistant
 
 The AI can assist with:
 
-* Clinic hours
-* Clinic location
-* Dental services
-* General FAQs
-* Appointment procedures
-* Appointment availability
-* Administrative questions
+- Clinic hours
+- Clinic location
+- Dental services
+- General FAQs
+- Appointment procedures
+- Appointment availability
+- Administrative questions
+
+The AI can call a small set of server-controlled tools for live clinic information and availability. It cannot access the database directly. Appointment requests use a short-lived intent followed by explicit patient confirmation and privacy consent before the existing appointment rules create a pending request.
 
 The AI is **not intended to diagnose patients or make clinical treatment decisions**.
 
@@ -110,12 +111,12 @@ Messenger Response
 
 Automated email workflows can include:
 
-* Appointment confirmation
-* Appointment request notification
-* Appointment reminder
-* Cancellation notification
-* Rescheduling notification
-* Staff notification
+- Appointment confirmation
+- Appointment request notification
+- Appointment reminder
+- Cancellation notification
+- Rescheduling notification
+- Staff notification
 
 n8n is used as the automation layer.
 
@@ -180,46 +181,46 @@ n8n is used as the automation layer.
 
 ## Frontend
 
-* Next.js
-* React
-* TypeScript
-* Tailwind CSS
-* shadcn/ui
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
 
 ## Backend
 
-* NestJS
-* TypeScript
-* REST API
-* Prisma
+- NestJS
+- TypeScript
+- REST API
+- Prisma
 
 ## Database
 
-* PostgreSQL
+- PostgreSQL
 
 ## Automation
 
-* n8n
+- n8n
 
 ## AI
 
-* OpenAI API
-* RAG
-* Tool calling
-* AI safety/guardrails
+- OpenAI API
+- RAG
+- Tool calling
+- AI safety/guardrails
 
 ## Optional Infrastructure
 
-* Redis
-* BullMQ
-* Docker
-* Docker Compose
+- Redis
+- BullMQ
+- Docker
+- Docker Compose
 
 ## Testing
 
-* Jest
-* Supertest
-* Playwright
+- Jest
+- Supertest
+- Playwright
 
 ---
 
@@ -274,12 +275,12 @@ Your PC
 
 Install:
 
-* Node.js
-* npm/pnpm
-* Git
-* Docker
-* Docker Compose
-* VS Code or another IDE
+- Node.js
+- npm/pnpm
+- Git
+- Docker
+- Docker Compose
+- VS Code or another IDE
 
 ---
 
@@ -372,7 +373,13 @@ API_HOST=127.0.0.1
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dental_clinic
 SESSION_TTL_DAYS=7
 
+AI_PROVIDER=openai
 OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+
+# Optional free-tier test provider
+GROQ_API_KEY=
+GROQ_MODEL=openai/gpt-oss-20b
 
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
@@ -512,17 +519,17 @@ Because this project may process sensitive patient-related information, security
 
 The system should implement:
 
-* HTTPS
-* Authentication
-* Role-based access control
-* Password hashing
-* Secure sessions/cookies
-* Input validation
-* Rate limiting
-* Audit logging
-* Secure secrets management
-* Database backups
-* Least-privilege access
+- HTTPS
+- Authentication
+- Role-based access control
+- Password hashing
+- Secure sessions/cookies
+- Input validation
+- Rate limiting
+- Audit logging
+- Secure secrets management
+- Database backups
+- Least-privilege access
 
 Development should use fake/test patient data.
 
@@ -534,105 +541,105 @@ Do not commit real patient information to the repository.
 
 ## Phase 1 — Planning
 
-* [ ] Requirements
-* [ ] Use cases
-* [ ] Roles and permissions
-* [ ] Architecture
-* [ ] ERD
-* [ ] Wireframes
+- [ ] Requirements
+- [ ] Use cases
+- [ ] Roles and permissions
+- [ ] Architecture
+- [ ] ERD
+- [ ] Wireframes
 
 ## Phase 2 — Project Setup
 
-* [ ] Monorepo
-* [ ] Next.js
-* [ ] NestJS
-* [ ] PostgreSQL
-* [ ] Prisma
-* [ ] Docker
-* [ ] n8n
+- [ ] Monorepo
+- [ ] Next.js
+- [ ] NestJS
+- [ ] PostgreSQL
+- [ ] Prisma
+- [ ] Docker
+- [ ] n8n
 
 ## Phase 3 — Backend
 
-* [ ] Authentication
-* [ ] RBAC
-* [ ] Patients
-* [ ] Dentists
-* [ ] Services
-* [ ] Appointments
-* [ ] Availability
-* [ ] Clinic information
+- [ ] Authentication
+- [ ] RBAC
+- [ ] Patients
+- [ ] Dentists
+- [ ] Services
+- [ ] Appointments
+- [ ] Availability
+- [ ] Clinic information
 
 ## Phase 4 — Website
 
-* [ ] Homepage
-* [ ] Services
-* [ ] Dentists
-* [ ] FAQ
-* [ ] Contact
-* [ ] Appointment form
-* [ ] Responsive design
+- [ ] Homepage
+- [ ] Services
+- [ ] Dentists
+- [ ] FAQ
+- [ ] Contact
+- [ ] Appointment form
+- [ ] Responsive design
 
 ## Phase 5 — Admin Dashboard
 
-* [ ] Dashboard
-* [ ] Appointment management
-* [ ] Calendar
-* [ ] Patient management
-* [ ] Dentist management
-* [ ] Service management
-* [ ] Conversation management
+- [ ] Dashboard
+- [ ] Appointment management
+- [ ] Calendar
+- [ ] Patient management
+- [ ] Dentist management
+- [ ] Service management
+- [x] Conversation management
 
 ## Phase 6 — Automation
 
-* [ ] n8n
-* [ ] Gmail
-* [ ] Appointment confirmation
-* [ ] Staff notification
-* [ ] Reminder workflow
-* [ ] Cancellation workflow
+- [ ] n8n
+- [ ] Gmail
+- [ ] Appointment confirmation
+- [ ] Staff notification
+- [ ] Reminder workflow
+- [ ] Cancellation workflow
 
 ## Phase 7 — AI
 
-* [ ] AI service
-* [ ] OpenAI integration
-* [ ] Clinic knowledge base
-* [ ] RAG
-* [ ] AI tools
-* [ ] Appointment tool
-* [ ] Safety guardrails
-* [ ] Human handoff
+- [x] AI service
+- [x] OpenAI integration
+- [x] Clinic knowledge base
+- [x] RAG
+- [x] AI tools
+- [x] Appointment tool
+- [ ] Safety guardrails
+- [x] Human handoff
 
 ## Phase 8 — Facebook
 
-* [ ] Meta developer configuration
-* [ ] Messenger webhook
-* [ ] Receive messages
-* [ ] Send messages
-* [ ] AI integration
-* [ ] Conversation storage
-* [ ] Human handoff
+- [ ] Meta developer configuration
+- [ ] Messenger webhook
+- [ ] Receive messages
+- [ ] Send messages
+- [ ] AI integration
+- [x] Conversation storage
+- [ ] Human handoff
 
 ## Phase 9 — Testing
 
-* [ ] Unit tests
-* [ ] Integration tests
-* [ ] API tests
-* [ ] E2E tests
-* [ ] AI safety tests
-* [ ] Authentication tests
-* [ ] Authorization tests
-* [ ] Webhook tests
+- [ ] Unit tests
+- [ ] Integration tests
+- [ ] API tests
+- [ ] E2E tests
+- [ ] AI safety tests
+- [ ] Authentication tests
+- [ ] Authorization tests
+- [ ] Webhook tests
 
 ## Phase 10 — Deployment
 
-* [ ] Production environment
-* [ ] Production database
-* [ ] Environment secrets
-* [ ] Domain
-* [ ] HTTPS
-* [ ] Monitoring
-* [ ] Backups
-* [ ] Security review
+- [ ] Production environment
+- [ ] Production database
+- [ ] Environment secrets
+- [ ] Domain
+- [ ] HTTPS
+- [ ] Monitoring
+- [ ] Backups
+- [ ] Security review
 
 ---
 
@@ -698,24 +705,24 @@ docs/
 
 The project is intended to demonstrate practical knowledge of:
 
-* Full-stack development
-* REST API design
-* Database design
-* Authentication and authorization
-* Appointment scheduling
-* Responsive UI development
-* AI integration
-* RAG
-* Tool calling
-* AI safety
-* Workflow automation
-* Facebook integration
-* Gmail integration
-* Webhooks
-* Docker
-* Testing
-* Cloud deployment
-* Security architecture
+- Full-stack development
+- REST API design
+- Database design
+- Authentication and authorization
+- Appointment scheduling
+- Responsive UI development
+- AI integration
+- RAG
+- Tool calling
+- AI safety
+- Workflow automation
+- Facebook integration
+- Gmail integration
+- Webhooks
+- Docker
+- Testing
+- Cloud deployment
+- Security architecture
 
 ---
 
