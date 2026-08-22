@@ -28,7 +28,8 @@ import { PrismaModule } from './prisma/prisma.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '../../.env',
+      // Support the documented workspace-root command and direct API starts.
+      envFilePath: ['.env', '../../.env'],
     }),
     ThrottlerModule.forRoot([
       {
