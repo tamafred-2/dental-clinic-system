@@ -2,12 +2,15 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { AppointmentStatus, DayOfWeek, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const dayByName: Record<string, DayOfWeek> = {
   Sunday: DayOfWeek.SUNDAY,
@@ -22,14 +25,42 @@ const dayByName: Record<string, DayOfWeek> = {
 const slotIntervalMinutes = 30;
 const maximumAdvanceDays = 180;
 const maximumFuturePendingAppointments = 3;
+const appointmentResultSelect = {
+  id: true,
+  status: true,
+  scheduledAt: true,
+  endAt: true,
+  dentist: { select: { name: true, title: true } },
+  service: { select: { name: true, durationMinutes: true } },
+} as const;
+
+export type AppointmentCreationContext = {
+  appointmentIntentId?: string;
+};
 
 @Injectable()
 export class AppointmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AppointmentsService.name);
 
-  async create(dto: CreateAppointmentDto) {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
+
+  async create(
+    dto: CreateAppointmentDto,
+    context: AppointmentCreationContext = {},
+  ) {
     if (dto.website) {
       throw new BadRequestException('Unable to process appointment request.');
+    }
+
+    if (context.appointmentIntentId) {
+      const existing = await this.prisma.appointment.findUnique({
+        where: { appointmentIntentId: context.appointmentIntentId },
+        select: appointmentResultSelect,
+      });
+      if (existing) return existing;
     }
 
     const scheduledAt = new Date(dto.scheduledAt);
@@ -50,7 +81,7 @@ export class AppointmentsService {
     }
 
     try {
-      return await this.prisma.$transaction(
+      const appointment = await this.prisma.$transaction(
         async (transaction) => {
           const clinic = await transaction.clinic.findFirst({
             select: { id: true, timeZone: true },
@@ -234,21 +265,51 @@ export class AppointmentsService {
               endAt,
               status: AppointmentStatus.PENDING,
               privacyConsentAt: now,
+              appointmentIntentId: context.appointmentIntentId,
             },
-            select: {
-              id: true,
-              status: true,
-              scheduledAt: true,
-              endAt: true,
-              dentist: { select: { name: true, title: true } },
-              service: {
-                select: { name: true, durationMinutes: true },
-              },
-            },
+            select: appointmentResultSelect,
           });
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
+      if (this.notifications) {
+        const clinic = await this.prisma.clinic.findFirst({
+          orderBy: { createdAt: 'asc' },
+          select: {
+            name: true,
+            address: true,
+            phone: true,
+            email: true,
+            timeZone: true,
+            cancellationPolicy: true,
+            appointmentPolicy: true,
+          },
+        });
+        if (!clinic) {
+          // The appointment is already committed. Notification enrichment is
+          // best-effort and must never turn a successful create into an error.
+          this.logger.warn(
+            `Skipping appointment notification for ${appointment.id}: clinic metadata unavailable.`,
+          );
+        } else {
+          await this.notifications.publishAppointmentCreated({
+            id: `appointment.created:${appointment.id}`,
+            type: 'appointment.created',
+            occurredAt: new Date().toISOString(),
+            appointment: {
+              ...appointment,
+              patient: {
+                firstName: dto.firstName,
+                lastName: dto.lastName,
+                email: dto.email,
+                phone: dto.phone,
+              },
+              clinic,
+            },
+          });
+        }
+      }
+      return appointment;
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
@@ -257,6 +318,13 @@ export class AppointmentsService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === 'P2002' || error.code === 'P2034')
       ) {
+        if (error.code === 'P2002' && context.appointmentIntentId) {
+          const existing = await this.prisma.appointment.findUnique({
+            where: { appointmentIntentId: context.appointmentIntentId },
+            select: appointmentResultSelect,
+          });
+          if (existing) return existing;
+        }
         this.throwSlotUnavailable();
       }
       throw error;

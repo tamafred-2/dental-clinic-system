@@ -41,7 +41,10 @@ describe('AppointmentsService', () => {
       create: jest.fn(),
     },
   };
-  const prisma = { $transaction: jest.fn() };
+  const prisma = {
+    $transaction: jest.fn(),
+    clinic: { findFirst: jest.fn() },
+  };
   const service = new AppointmentsService(prisma as unknown as PrismaService);
   const scheduledAt = futureClinicAppointment();
   const local = clinicParts(scheduledAt);
@@ -84,6 +87,15 @@ describe('AppointmentsService', () => {
     transaction.appointment.create.mockResolvedValue({
       id: 'appointment-1',
       status: AppointmentStatus.PENDING,
+    });
+    prisma.clinic.findFirst.mockResolvedValue({
+      name: 'Bright Smile Dental Clinic',
+      address: 'Calasiao, Pangasinan, Philippines',
+      phone: '+63 75 555 0142',
+      email: 'hello@dentalclinic.test',
+      timeZone: 'Asia/Manila',
+      cancellationPolicy: 'Please contact the clinic to cancel or reschedule.',
+      appointmentPolicy: 'Please arrive 10 minutes early with a valid photo ID.',
     });
     prisma.$transaction.mockImplementation(
       (callback: (client: typeof transaction) => Promise<unknown>) =>
@@ -176,6 +188,43 @@ describe('AppointmentsService', () => {
           dentist: { select: { name: true, title: true } },
           service: { select: { name: true, durationMinutes: true } },
         },
+      }),
+    );
+  });
+
+  it('publishes the appointment event after a successful transaction', async () => {
+    const notifications = {
+      publishAppointmentCreated: jest.fn().mockResolvedValue({
+        delivered: true,
+        skipped: false,
+      }),
+    };
+    const serviceWithNotifications = new AppointmentsService(
+      prisma as unknown as PrismaService,
+      notifications as never,
+    );
+    transaction.appointment.create.mockResolvedValue({
+      id: 'appointment-1',
+      status: AppointmentStatus.PENDING,
+      scheduledAt,
+      endAt: new Date(scheduledAt.getTime() + 60 * 60_000),
+      dentist: { name: 'Dr. Reyes', title: 'Dentist' },
+      service: { name: 'Cleaning', durationMinutes: 60 },
+    });
+
+    await serviceWithNotifications.create(dto);
+
+    expect(notifications.publishAppointmentCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'appointment.created:appointment-1',
+        type: 'appointment.created',
+        appointment: expect.objectContaining({
+          id: 'appointment-1',
+          patient: expect.objectContaining({ email: dto.email }),
+          clinic: expect.objectContaining({
+            name: 'Bright Smile Dental Clinic',
+          }),
+        }),
       }),
     );
   });
